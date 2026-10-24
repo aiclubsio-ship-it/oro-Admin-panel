@@ -1,0 +1,1178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<!-- SECURITY: keep the admin panel out of search engines, never leak the admin URL via Referer -->
+<meta name="robots" content="noindex,nofollow,noarchive"/>
+<meta name="referrer" content="no-referrer"/>
+<title>Oro Admin</title>
+<!-- SECURITY: refuse to be embedded in another site (clickjacking) -->
+<script>try { if (window.top !== window.self) window.top.location = window.self.location; } catch (x) { document.documentElement.style.display = 'none'; }</script>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+
+<!-- Base reset + hidden-by-default rules (inline, so they work even if every CDN fails) -->
+<style id="oro-base-fallback">
+/* ---- 1. Base reset: keeps layout stable if a CDN is slow or blocked ---- */
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+body{margin:0;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;line-height:1.5;color:#222222}
+img,svg,video,canvas{max-width:100%}
+button,input,select,textarea{font:inherit;color:inherit}
+.hidden{display:none}
+/* ---- 2. Hidden by default: overlays, gates, panels and banners stay invisible until JS opens them ---- */
+#gate.hidden,#app.hidden,#cfgWarn.hidden,#pinErr.hidden,#toast.hidden,#modal.hidden,#oModal.hidden{display:none !important}
+@keyframes toastIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+.toast-in{animation:toastIn .25s ease-out}
+.np{touch-action:none;cursor:grab}
+.np:active{cursor:grabbing}
+/* ---- 3. Degraded mode (only when Tailwind failed to load): minimal usable overlay layout ---- */
+.no-tw body{background:#F5F5F5}
+.no-tw #gate{position:fixed;top:0;right:0;bottom:0;left:0;z-index:50;background:#222222;display:flex;align-items:center;justify-content:center;padding:1rem}
+.no-tw #gate form{background:#fff;border-radius:.75rem;padding:1.5rem;width:100%;max-width:20rem;text-align:center}
+.no-tw #gate input,.no-tw #gate button{display:block;width:100%;margin-top:.5rem;padding:.65rem;border:1px solid #d1d5db;border-radius:.375rem}
+.no-tw #gate button{background:#F97316;color:#fff;border-color:#F97316;font-weight:600}
+.no-tw #nav{background:#222222;color:#fff;display:flex;overflow-x:auto}
+.no-tw #nav button{background:none;border:0;color:#fff;padding:.75rem 1rem;white-space:nowrap}
+.no-tw main{padding:1rem}
+.no-tw #modal.flex,.no-tw #oModal.flex{position:fixed;top:0;right:0;bottom:0;left:0;z-index:40;background:rgba(0,0,0,.6);align-items:center;justify-content:center;padding:1rem}
+.no-tw #modal form,.no-tw #oModal>div{background:#fff;border-radius:.75rem;width:100%;max-width:40rem;max-height:92vh;overflow:auto}
+.no-tw #toast{position:fixed;right:1rem;bottom:1rem;z-index:60;background:#222222;color:#fff;padding:.75rem 1rem;border-radius:.5rem}
+</style>
+
+<!-- Tailwind first, then its config (guarded) -->
+<script src="https://cdn.tailwindcss.com/3.4.17" onerror="document.documentElement.className+=' no-tw'"></script>
+<script>
+/* Tailwind config: only runs if the CDN script actually loaded (no ReferenceError on a blocked CDN). */
+(function () {
+  var root = document.documentElement;
+  if (window.tailwind) {
+    window.tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Inter', 'sans-serif'] },
+          colors: { oro: { o: '#F97316', oh: '#EA580C', c: '#222222', g: '#F5F5F5' } }
+        }
+      }
+    };
+  } else {
+    root.className += ' no-tw';
+  }
+})();
+</script>
+
+<!-- Icons (optional) -->
+<script src="https://cdn.jsdelivr.net/npm/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+<script>
+/* Icons are optional: a blocked/slow CDN must never halt the rest of the page. */
+(function (w) {
+  if (!w.lucide || typeof w.lucide.createIcons !== 'function') { w.lucide = { createIcons: function () {} }; }
+  w.oroIcons = function () {
+    try { if (w.lucide && typeof w.lucide.createIcons === 'function') { w.lucide.createIcons(); } }
+    catch (err) { if (w.console) { console.warn('Icon render skipped:', err); } }
+  };
+})(window);
+</script>
+
+<!-- Supabase client (pinned) -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+</head>
+<body class="font-sans bg-oro-g text-oro-c min-h-screen">
+
+<!-- ADMIN LOGIN GATE (Supabase Auth: email + password, admin role required) -->
+<div id="gate" class="fixed inset-0 z-50 bg-oro-c flex items-center justify-center p-4">
+  <form id="gateForm" class="bg-white rounded-xl p-6 w-full max-w-xs text-center">
+    <div class="w-12 h-12 mx-auto rounded-lg bg-oro-o text-white flex items-center justify-center"><i data-lucide="lock"></i></div>
+    <h1 class="text-lg font-bold mt-3">Oro Admin</h1>
+    <p class="text-xs text-gray-500 mt-1">Sign in with your admin account.</p>
+    <input id="gEmail" type="email" required autocomplete="username" placeholder="Admin email" aria-label="Admin email" class="mt-4 w-full h-11 px-3 text-sm border border-gray-300 rounded-md focus:outline-none focus:border-oro-o"/>
+    <input id="gPass" type="password" required autocomplete="current-password" placeholder="Password" aria-label="Password" class="mt-2 w-full h-11 px-3 text-sm border border-gray-300 rounded-md focus:outline-none focus:border-oro-o"/>
+    <p id="pinErr" class="hidden text-xs text-red-600 mt-2"></p>
+    <button id="gateBtn" class="mt-4 w-full h-11 bg-oro-o hover:bg-oro-oh text-white text-sm font-semibold rounded-md disabled:opacity-50">Sign in</button>
+  </form>
+</div>
+
+<div id="app" class="hidden md:flex min-h-screen">
+  <nav id="nav" class="bg-oro-c text-white md:w-56 md:min-h-screen md:sticky md:top-0 md:self-start flex md:flex-col overflow-x-auto md:overflow-visible sticky top-0 z-30 md:z-auto"></nav>
+  <main class="flex-1 min-w-0 p-4 md:p-8">
+    <div id="cfgWarn" class="hidden mb-4 p-3 rounded-md bg-amber-50 border border-amber-200 text-sm text-amber-900">Supabase isn't configured. Paste your project URL and anon key at the top of the script.</div>
+    <div id="view"></div>
+  </main>
+</div>
+
+<!-- FORM MODAL -->
+<div id="modal" class="hidden fixed inset-0 z-40 bg-black/60 items-end md:items-center justify-center md:p-4">
+  <form id="mForm" class="bg-white w-full md:max-w-xl rounded-t-xl md:rounded-xl max-h-[92vh] flex flex-col">
+    <div class="px-5 py-4 border-b flex items-center justify-between"><h2 id="mTitle" class="font-bold"></h2><button type="button" onclick="closeModal()" aria-label="Close"><i data-lucide="x" class="w-5 h-5"></i></button></div>
+    <div id="mBody" class="p-5 overflow-y-auto space-y-3"></div>
+    <div class="px-5 py-4 border-t flex gap-2 justify-end">
+      <p id="mErr" class="text-xs text-red-600 mr-auto self-center"></p>
+      <button type="button" onclick="closeModal()" class="h-10 px-4 border border-gray-300 rounded-md text-sm font-semibold">Cancel</button>
+      <button id="mSave" type="submit" class="h-10 px-5 bg-oro-o hover:bg-oro-oh text-white rounded-md text-sm font-semibold flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">Save</button>
+    </div>
+  </form>
+</div>
+<!-- ORDER DETAILS & DISPATCH MODAL -->
+<div id="oModal" class="hidden fixed inset-0 z-40 bg-black/60 items-end md:items-center justify-center md:p-4" onclick="if(event.target===this)closeOrder()">
+  <div class="bg-white w-full md:max-w-2xl rounded-t-xl md:rounded-xl max-h-[94vh] flex flex-col" role="dialog" aria-modal="true" aria-label="Order Details and Dispatch">
+    <div class="px-5 py-4 border-b flex items-center justify-between"><h2 class="font-bold">Order Details &amp; Dispatch <span id="oNum" class="text-oro-o font-mono text-sm ml-1"></span></h2><button type="button" onclick="closeOrder()" aria-label="Close"><i data-lucide="x" class="w-5 h-5"></i></button></div>
+    <div id="oBody" class="p-5 overflow-y-auto space-y-4"></div>
+  </div>
+</div>
+<div id="toast" class="fixed bottom-4 right-4 z-[60] bg-oro-c text-white text-xs px-4 py-3 rounded-lg hidden"></div>
+
+<!-- App code, split into isolated blocks (order matters; each block is valid on its own) -->
+<script>
+// ============================================================================
+// ADMIN CREDENTIALS CONFIGURATION 
+// ============================================================================
+// Same Supabase project as the storefront. These are PUBLIC (publishable) values.
+// Never put a service_role / sb_secret_ key in this file.
+const SUPABASE_URL = "https://qogeeqtgzthbbddywklt.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_EsBjk6guE13njgK8aP6A_g_72qV7RT7";
+
+// Cloudinary Unsigned Upload Configuration
+// SECURITY: in Cloudinary > Settings > Upload > Upload presets > "oro_products", restrict allowed formats
+// (jpg, png, webp), max file size (e.g. 10 MB), set a fixed folder, and turn OFF "overwrite".
+const CLOUDINARY_CLOUD_NAME = "xogk6ygd";
+const CLOUDINARY_UPLOAD_PRESET = "oro_products"; // Preset name you created
+
+// Path/URL of your storefront page, used by the Theme Builder live preview (same site as this admin page).
+const STOREFRONT_URL = "index.html";
+
+// NOTE: The old hard-coded ADMIN_PIN was removed. A PIN inside client-side JavaScript is visible to every
+// visitor, so it protected nothing. Admin access is now a real Supabase Auth login with the "admin" role,
+// and the database (RLS) enforces it. See oro-security-setup.sql.
+// ============================================================================
+
+const $ = (id) => document.getElementById(id);
+const e = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const inr = (n) => '\u20b9' + Number(n || 0).toLocaleString('en-IN');
+// SECURITY: only allow https image URLs from the database to be loaded into the admin page
+const safeUrl = (u) => (/^https:\/\//i.test(String(u || '')) ? String(u) : '');
+const ok = SUPABASE_URL.startsWith('http') && !SUPABASE_URL.includes('PASTE') && !SUPABASE_ANON_KEY.includes('PASTE');
+// SECURITY: separate storage key so an admin session never mixes with a customer session from the storefront
+const db = ok && window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { storageKey: 'oro-admin-auth', persistSession: true, autoRefreshToken: true } }) : null;
+if (!db) $('cfgWarn').classList.remove('hidden');
+function toast(m) { const t = $('toast'); t.textContent = m; t.classList.remove('hidden'); t.classList.remove('toast-in'); void t.offsetWidth; t.classList.add('toast-in'); clearTimeout(t._t); t._t = setTimeout(() => t.classList.add('hidden'), 2800); }
+
+// ---- Admin login (Supabase Auth + admin role) ----
+const isAdmin = (u) => !!u && !!u.app_metadata && u.app_metadata.role === 'admin';
+function showPinErr(m) { const el = $('pinErr'); el.textContent = m; el.classList.toggle('hidden', !m); }
+function unlock() { $('gate').classList.add('hidden'); $('app').classList.remove('hidden'); $('app').classList.add('md:flex'); showPinErr(''); bumpIdle(); go('dashboard'); }
+function showGate() {
+  clearTimeout(idleT);
+  if (stopNet) { stopNet(); stopNet = null; }
+  charts.forEach((c) => c.destroy()); charts = [];
+  $('app').classList.add('hidden'); $('app').classList.remove('md:flex');
+  bld = null; cur = 'dashboard';
+  $('view').innerHTML = ''; $('nav').innerHTML = '';
+  ['modal', 'oModal'].forEach((id) => { $(id).classList.add('hidden'); $(id).classList.remove('flex'); });
+  $('gate').classList.remove('hidden');
+}
+async function signOut() { try { if (db) await db.auth.signOut(); } catch (x) { /* ignore */ } showGate(); }
+// Auto sign-out after 30 minutes without activity
+let idleT = null;
+function bumpIdle() { clearTimeout(idleT); idleT = setTimeout(() => { toast('Signed out due to inactivity'); signOut(); }, 30 * 60 * 1000); }
+['click', 'keydown', 'pointerdown', 'touchstart'].forEach((ev) => document.addEventListener(ev, () => { if (!$('app').classList.contains('hidden')) bumpIdle(); }, { passive: true }));
+
+let loginFails = 0, lockUntil = 0;
+$('gateForm').onsubmit = async (ev) => {
+  ev.preventDefault();
+  if (!db) return showPinErr('Supabase is not configured or failed to load. Refresh and try again.');
+  if (Date.now() < lockUntil) return showPinErr(`Too many attempts. Wait ${Math.ceil((lockUntil - Date.now()) / 1000)}s.`);
+  const btn = $('gateBtn'); btn.disabled = true; btn.textContent = 'Signing in\u2026';
+  try {
+    const { data, error } = await db.auth.signInWithPassword({ email: $('gEmail').value.trim().toLowerCase(), password: $('gPass').value });
+    $('gPass').value = '';
+    if (error || !data || !data.user) {
+      loginFails++; if (loginFails >= 5) { lockUntil = Date.now() + 60000; loginFails = 0; }
+      return showPinErr('Incorrect email or password.');
+    }
+    if (!isAdmin(data.user)) { await db.auth.signOut(); return showPinErr('This account does not have admin access.'); }
+    loginFails = 0; unlock();
+  } catch (x) { showPinErr('Could not sign in. Check your connection.'); }
+  finally { btn.disabled = false; btn.textContent = 'Sign in'; }
+};
+async function bootAuth() {
+  if (!db) return;
+  db.auth.onAuthStateChange((event) => { if (event === 'SIGNED_OUT') setTimeout(showGate, 0); }); // also fires if the session expires
+  try {
+    const { data } = await db.auth.getSession();
+    if (data.session && isAdmin(data.session.user)) unlock();
+    else if (data.session) await db.auth.signOut();
+  } catch (x) { /* stay on the login screen */ }
+}
+
+// ---- Table definitions ----
+const f = (k, l, t = 'text', x = {}) => ({ k, l, t, ...x });
+const DEFAULT_CATS = ['Electronics', 'Home & Kitchen', 'Fashion', 'Beauty', 'Sports & Fitness', 'Toys & Games', 'Automotive'];
+const T = {
+  products: { label: 'Products', icon: 'package', pk: 'id', fields: [f('title', 'Title', 'title'), f('id', 'Product ID (auto 5-digit, editable)', 'pid'), f('category', 'Category', 'cat'), f('subcategory', 'Subcategory'), f('price', 'Price (\u20b9)', 'number'), f('old_price', 'Old price (\u20b9)', 'number'), f('discount', 'Auto discount', 'autodisc'), f('rating', 'Rating', 'stars'), f('images', 'Product photos', 'images', { max: 6 }), f('description', 'Description', 'area'), f('is_deal', 'Feature in Deals of the Day', 'bool'), f('is_bestseller', 'Feature in Best Sellers', 'bool'), f('is_active', 'Active', 'bool', { def: true })],
+    row: (r) => [(r.images || [])[0], r.title, `${inr(r.price)} \u00b7 ${r.category || 'No category'} \u00b7 ${r.is_active === false ? 'Hidden' : 'Live'}`] },
+  banners: { label: 'Banners', icon: 'image', pk: 'id', fields: [f('title', 'Title'), f('subtitle', 'Subtitle'), f('badge_text', 'Badge', 'text', { def: 'Limited Time Offer' }), f('target_product_id', 'Pick Target Product', 'prodlink'), f('image_url', 'Banner image', 'images', { max: 1, single: true }), f('is_active', 'Active', 'bool', { def: true })],
+    row: (r) => [r.image_url, r.title, (r.subtitle || '') + (r.target_product_id ? ` \u00b7 \u2192 Product ${r.target_product_id}` : '')] },
+  categories: { label: 'Categories', icon: 'layout-grid', pk: 'id', fields: [f('name', 'Name'), f('icon', 'Lucide icon name (e.g. shirt)', 'text', { def: 'tag' })], row: (r) => [null, r.name, r.icon || ''] },
+  coupons: { label: 'Coupons', icon: 'ticket', pk: 'code', fields: [f('code', 'Code'), f('discount_percent', 'Discount %', 'number', { def: 10 }), f('flat_discount', 'Flat discount (\u20b9)', 'number', { def: 0 }), f('max_users', 'Max users', 'number', { def: 100 }), f('is_active', 'Active', 'bool', { def: true })],
+    row: (r) => [null, r.code, `${r.discount_percent ?? 0}% + ${inr(r.flat_discount)} off \u00b7 used ${r.used_count ?? 0}/${r.max_users ?? '\u221e'} \u00b7 ${r.is_active === false ? 'Inactive' : 'Active'}`] }
+};
+// Postgres 42501 = the logged-in role has no GRANT/policy for that action. Explain it instead of showing a raw error.
+const dbMsg = (x, tbl) => (x && (x.code === '42501' || /permission denied/i.test(x.message || ''))) ? `No database permission on "${tbl}". Run oro-admin-fix.sql once in the Supabase SQL editor, then sign out and in.` : ((x && x.message) || String(x));
+const slug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+const STATUSES = ['Confirmed', 'Dispatched / In Transit', 'Out for Delivery', 'Delivered', 'Cancelled'];
+const normStatus = (s) => (!s || s === 'Pending') ? 'Confirmed' : s === 'In Shipping' ? 'Dispatched / In Transit' : s;
+const STATUS_CLS = { 'Confirmed': 'bg-orange-100 text-orange-700', 'Dispatched / In Transit': 'bg-blue-100 text-blue-700', 'Out for Delivery': 'bg-violet-100 text-violet-700', 'Delivered': 'bg-emerald-100 text-emerald-700', 'Cancelled': 'bg-red-100 text-red-700' };
+const phoneDigits = (p) => { const d = String(p || '').replace(/\D/g, ''); return d.length === 10 ? '91' + d : d; };
+// Orders arrive either flat (storefront insert) or with a shipping_address object; normalise both
+function normOrder(r) {
+  const sa = r.shipping_address && typeof r.shipping_address === 'object' ? r.shipping_address : {};
+  let line = String(sa.address ?? r.address ?? ''), lm = sa.landmark || '';
+  const m = /,?\s*Near\s+(.+)$/i.exec(line); if (m) { if (!lm) lm = m[1]; line = line.slice(0, m.index); }
+  const parts = line.split(',').map((x) => x.trim()).filter(Boolean);
+  return { ...r, order_number: r.order_number || r.id, customer_phone: r.customer_phone || r.phone || '', status: normStatus(r.status), items: Array.isArray(r.items) ? r.items : [],
+    addr: { house: parts[0] || '', street: parts.slice(1).join(', '), landmark: lm, city: sa.city ?? r.city ?? '', state: sa.state ?? r.state ?? '', pincode: sa.pincode ?? r.pincode ?? '' } };
+}
+const TABS = [['dashboard', 'Dashboard', 'bar-chart-3'], ['orders', 'Orders', 'shopping-bag'], ['customers', 'Customers', 'users'], ...Object.entries(T).map(([k, v]) => [k, v.label, v.icon]), ['builder', 'Theme Builder', 'layout-template'], ['settings', 'Settings', 'settings'], ['neural', 'Neural Net', 'cpu']];
+
+let cur = 'dashboard', charts = [], stopNet = null;
+function go(t) {
+  if (cur === 'builder' && typeof bldDirty === 'function' && bldDirty() && !confirm('You have unsaved Theme Builder changes. Leave and discard them?')) return;
+  cur = t; charts.forEach((c) => c.destroy()); charts = []; if (stopNet) stopNet(), stopNet = null;
+  $('nav').innerHTML = `<div class="hidden md:block px-5 py-5 text-xl font-bold text-oro-o">Oro <span class="text-white text-xs font-medium">Admin</span></div>` +
+    TABS.map(([k, l, i]) => `<button onclick="go('${k}')" class="flex items-center gap-2.5 px-4 py-3 md:px-5 text-sm font-medium whitespace-nowrap ${k === t ? 'bg-oro-o text-white' : 'text-gray-300 hover:bg-white/10'}"><i data-lucide="${i}" class="w-4 h-4"></i>${l}</button>`).join('') +
+    `<button onclick="signOut()" class="flex items-center gap-2.5 px-4 py-3 md:px-5 text-sm font-medium whitespace-nowrap text-gray-300 hover:bg-white/10 md:mt-auto"><i data-lucide="log-out" class="w-4 h-4"></i>Sign out</button>`;
+  ({ dashboard, orders, neural, settings, coupons, builder, customers }[t] || list)(t);
+  oroIcons();
+}
+const empty = (m) => `<div class="bg-white rounded-xl border border-gray-200 p-10 text-center text-sm text-gray-500">${m}</div>`;
+const head = (t, extra = '') => `<div class="flex items-center justify-between gap-3 mb-5"><h1 class="text-xl md:text-2xl font-bold">${t}</h1>${extra}</div>`;
+async function fetchAll(t, order = 'created_at') {
+  if (!db) return [];
+  try {
+    let q = db.from(t).select('*'); if (order) q = q.order(order, { ascending: false });
+    let r = await q;
+    if (r.error && order) r = await db.from(t).select('*'); // table may lack created_at
+    if (r.error) { toast(`Couldn't load ${t}: ${r.error.message}`); return []; }
+    return r.data || [];
+  } catch (x) { toast(`Couldn't reach ${t}: ${x.message}`); return []; }
+}
+async function refreshStorefront() {
+  if (!db) return toast('Supabase isn\u2019t configured.');
+  try {
+    const { count, error } = await db.from('products').select('id', { count: 'exact', head: true }).eq('is_active', true);
+    if (error) throw error;
+    toast(count ? `${count} live product${count === 1 ? '' : 's'} will show on the storefront` : 'No active products yet: the storefront will be empty');
+  } catch (x) { toast('Check failed: ' + x.message); }
+}
+
+// ---- Dashboard ----
+const ymd = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+async function countRows(t) { if (!db) return null; try { const { count, error } = await db.from(t).select('*', { count: 'exact', head: true }); return error ? null : count; } catch (x) { return null; } }
+async function todayVisitors() {
+  if (!db) return null;
+  try { const { data, error } = await db.from('visits').select('visitor_id').eq('visit_date', ymd(new Date())).limit(10000); if (error) return null; return new Set((data || []).map((v) => v.visitor_id)).size; } catch (x) { return null; }
+}
+function salesSvg(labels, vals) {
+  const W = 600, H = 230, pl = 52, pr = 16, pt = 16, pb = 30, max = Math.max(...vals, 1), n = vals.length;
+  const x = (i) => pl + i * (W - pl - pr) / (n - 1), y = (v) => pt + (H - pt - pb) * (1 - v / max);
+  const line = vals.map((v, i) => (i ? 'L' : 'M') + x(i).toFixed(1) + ' ' + y(v).toFixed(1)).join(' ');
+  const grid = [0, .25, .5, .75, 1].map((g) => { const yy = pt + (H - pt - pb) * (1 - g); return `<line x1="${pl}" x2="${W - pr}" y1="${yy}" y2="${yy}" stroke="#E5E7EB" stroke-width="1"/><text x="${pl - 8}" y="${yy + 4}" text-anchor="end" font-size="10" fill="#6B7280">${inr(Math.round(max * g))}</text>`; }).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" class="w-full h-auto" role="img" aria-label="Sales for the last 7 days"><defs><linearGradient id="sg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#F97316" stop-opacity=".28"/><stop offset="1" stop-color="#F97316" stop-opacity="0"/></linearGradient></defs>${grid}
+    <path d="${line} L${x(n - 1)} ${H - pb} L${x(0)} ${H - pb} Z" fill="url(#sg)"/><path d="${line}" fill="none" stroke="#F97316" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+    ${vals.map((v, i) => `<circle cx="${x(i)}" cy="${y(v)}" r="4" fill="#fff" stroke="#F97316" stroke-width="2"><title>${labels[i]}: ${inr(v)}</title></circle><text x="${x(i)}" y="${H - 10}" text-anchor="middle" font-size="10" fill="#6B7280">${labels[i]}</text>`).join('')}</svg>`;
+}
+// SECURITY: visits are now readable by the admin only (see oro-security-setup.sql). This SQL is kept for reference.
+const VISITS_SQL = `create table if not exists visits (id bigint generated always as identity primary key, visitor_id text, visit_date date default current_date, created_at timestamptz default now());
+alter table visits enable row level security;
+-- run oro-security-setup.sql instead: it creates the table with safe policies (anyone can log a visit, only admin can read)`;
+async function dashboard() {
+  $('view').innerHTML = head('Dashboard') + '<p class="text-sm text-gray-500">Loading\u2026</p>';
+  let [raw, products, visitors, profiles] = [[], [], null, null];
+  try {
+    [raw, products, visitors, profiles] = await Promise.all([fetchAll('orders'), fetchAll('products', null), todayVisitors(), (async () => { const n = await countRows('profiles'); return n != null ? n : await countRows('users'); })()]);
+  } catch (x) { toast('Dashboard load failed: ' + x.message); }
+  if (cur !== 'dashboard') return;
+  const orders = raw.map(normOrder), live = orders.filter((o) => o.status !== 'Cancelled');
+  const rev = live.reduce((s, o) => s + Number(o.total_amount || 0), 0);
+  const by = {}; live.forEach((o) => { const k = String(o.customer_email && o.customer_email !== 'guest@oro.in' ? o.customer_email : o.customer_phone || '').toLowerCase().trim(); if (k) by[k] = (by[k] || 0) + 1; });
+  const custs = Object.keys(by), rep = custs.filter((k) => by[k] > 1).length, rate = custs.length ? Math.round(rep / custs.length * 1000) / 10 : 0;
+  const accounts = profiles != null ? profiles : custs.length, accLbl = profiles != null ? 'Registered accounts' : 'Customers (from orders)';
+  const days = [...Array(7)].map((_, i) => { const d = new Date(); d.setDate(d.getDate() - 6 + i); return d; });
+  const vals = days.map((d) => live.filter((o) => o.created_at && ymd(new Date(o.created_at)) === ymd(d)).reduce((s, o) => s + Number(o.total_amount || 0), 0));
+  const week = vals.reduce((a, b) => a + b, 0);
+  const card = (ic, l, v, sub = '', id = '') => `<div class="bg-white rounded-xl border border-gray-200 p-4"><div class="flex items-center gap-2 text-gray-500"><i data-lucide="${ic}" class="w-4 h-4 text-oro-o"></i><p class="text-xs">${l}</p></div><p ${id ? `id="${id}"` : ''} class="text-xl md:text-2xl font-bold mt-1.5">${v}</p><p class="text-[11px] text-gray-500 mt-0.5">${sub}</p></div>`;
+  const statusBars = STATUSES.map((st) => { const n = orders.filter((o) => o.status === st).length; return `<div><div class="flex justify-between text-xs mb-1"><span>${st}</span><span class="font-semibold">${n}</span></div><div class="h-2 rounded-full bg-gray-100"><div class="h-2 rounded-full bg-oro-o" style="width:${orders.length ? Math.round(n / orders.length * 100) : 0}%"></div></div></div>`; }).join('');
+  $('view').innerHTML = head('Dashboard', `<span class="text-xs text-gray-500">${products.length} products</span>`) +
+    `<div class="grid grid-cols-2 lg:grid-cols-4 gap-3">${card('eye', 'Visitors today', visitors == null ? '\u2014' : visitors, visitors == null ? 'Visit log table not found' : 'Unique visits \u00b7 live', 'vVis')}${card('users', accLbl, accounts)}${card('repeat', 'Repeat customer rate', rate + '%', `${rep} of ${custs.length} customers ordered 2+ times`)}${card('indian-rupee', 'Gross sales (COD)', inr(rev), `${orders.length} total orders \u00b7 ${live.length} confirmed`)}</div>` +
+    (visitors == null ? `<details class="mt-3 bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-900"><summary class="cursor-pointer font-semibold">Enable visitor tracking: run oro-security-setup.sql once in Supabase</summary><pre class="mt-2 whitespace-pre-wrap font-mono select-all">${e(VISITS_SQL)}</pre></details>` : '') +
+    `<div class="grid lg:grid-cols-3 gap-3 mt-3"><div class="lg:col-span-2 bg-white rounded-xl border border-gray-200 p-4"><div class="flex items-baseline justify-between mb-2"><p class="text-sm font-semibold">Sales trajectory \u00b7 this week</p><p class="text-xs text-gray-500">${inr(week)} in 7 days</p></div>${salesSvg(days.map((d) => d.toLocaleDateString('en-IN', { weekday: 'short' })), vals)}</div>
+    <div class="bg-white rounded-xl border border-gray-200 p-4"><p class="text-sm font-semibold mb-3">Orders by status</p><div class="space-y-3">${statusBars}</div></div></div>`;
+  oroIcons();
+  const iv = setInterval(async () => { const n = await todayVisitors(); if (n != null && $('vVis')) $('vVis').textContent = n; }, 15000);
+  stopNet = () => clearInterval(iv);
+}
+
+// ---- Orders ----
+let ordersCache = [], curOrder = -1;
+async function orders() {
+  $('view').innerHTML = head('Orders') + '<p class="text-sm text-gray-500">Loading\u2026</p>';
+  ordersCache = (await fetchAll('orders')).map(normOrder); if (cur !== 'orders') return;
+  renderOrders();
+}
+function renderOrders() {
+  const rows = ordersCache;
+  $('view').innerHTML = head('Orders', `<span class="text-xs text-gray-500">${rows.length} total</span>`) + (rows.length ? `<div class="space-y-2">${rows.map((o, i) => `
+    <div role="button" tabindex="0" onclick="openOrder(${i})" onkeydown="if(event.target===this&&event.key==='Enter')openOrder(${i})" class="bg-white rounded-xl border border-gray-200 hover:border-oro-o p-4 cursor-pointer transition-colors">
+      <div class="flex flex-wrap items-center gap-x-6 gap-y-2">
+        <div><p class="text-xs text-gray-500">Order</p><p class="font-bold font-mono">${e(o.order_number)}</p></div>
+        <div><p class="text-xs text-gray-500">Total</p><p class="font-semibold">${inr(o.total_amount)}</p></div>
+        <div><p class="text-xs text-gray-500">Placed</p><p class="text-sm">${o.created_at ? new Date(o.created_at).toLocaleString('en-IN') : '\u2014'}</p></div>
+        <span class="md:ml-auto text-xs font-semibold px-2.5 py-1 rounded-full ${STATUS_CLS[o.status] || 'bg-gray-100 text-gray-700'}">${e(o.status)}</span><button type="button" onclick="event.stopPropagation();deleteOrder(${i})" aria-label="Delete order ${e(o.order_number)}" class="p-1.5 text-gray-400 hover:text-red-600"><i data-lucide="trash-2" class="w-4 h-4"></i></button><i data-lucide="chevron-right" class="w-4 h-4 text-gray-400 hidden md:block"></i></div>
+      <p class="text-sm mt-2">${e(o.customer_name)} \u00b7 ${e(o.customer_phone)}</p>
+      <p class="text-xs text-gray-500 mt-0.5 truncate">${o.items.map((it) => `${e(it.title)} \u00d7 ${e(it.quantity)}`).join(', ')}</p></div>`).join('')}</div>` : empty('No orders yet'));
+  oroIcons();
+}
+function openOrder(i) {
+  const o = ordersCache[i]; if (!o) return; curOrder = i;
+  const a = o.addr, tel = phoneDigits(o.customer_phone), total = Number(o.total_amount || 0);
+  const itemsSum = o.items.reduce((s, it) => s + Number(it.price || 0) * Number(it.quantity || 1), 0), extra = total - itemsSum;
+  const cod = !o.payment_method || /cod|cash/i.test(o.payment_method);
+  const row = (l, v) => v ? `<div><p class="text-[11px] text-gray-500">${l}</p><p class="text-sm font-medium">${e(v)}</p></div>` : '';
+  $('oNum').textContent = '#' + o.order_number;
+  $('oBody').innerHTML = `
+    <section class="rounded-xl border border-gray-200 p-4"><p class="text-xs font-bold uppercase tracking-wide text-gray-500 mb-3">Customer</p>
+      <div class="grid sm:grid-cols-3 gap-3"><div><p class="text-[11px] text-gray-500">Full name</p><p class="text-sm font-semibold">${e(o.customer_name) || '\u2014'}</p></div>
+      <div><p class="text-[11px] text-gray-500">Phone</p>${tel ? `<a href="tel:+${tel}" class="text-sm font-semibold text-oro-o hover:underline inline-flex items-center gap-1"><i data-lucide="phone" class="w-3.5 h-3.5"></i>+${e(tel)}</a>` : '<p class="text-sm">\u2014</p>'}</div>
+      <div class="min-w-0"><p class="text-[11px] text-gray-500">Email</p>${o.customer_email ? `<a href="mailto:${e(o.customer_email)}" class="text-sm font-semibold hover:text-oro-o break-all">${e(o.customer_email)}</a>` : '<p class="text-sm">\u2014</p>'}</div></div></section>
+    <section class="rounded-xl border border-gray-200 p-4"><p class="text-xs font-bold uppercase tracking-wide text-gray-500 mb-3">Delivery address</p>
+      <div class="grid sm:grid-cols-2 gap-3">${row('House / Flat No.', a.house)}${row('Street / Area', a.street)}${row('Landmark', a.landmark)}${row('City', a.city)}${row('State', a.state)}${row('PIN code', a.pincode)}</div></section>
+    <section class="rounded-xl border border-gray-200 p-4"><p class="text-xs font-bold uppercase tracking-wide text-gray-500 mb-3">Items</p><div class="divide-y divide-gray-100">
+      ${o.items.map((it) => { const img = safeUrl(it.image || (it.images && it.images[0]) || ''); const q = Number(it.quantity || 1), pr = Number(it.price || 0);
+        return `<div class="py-2.5 flex items-center gap-3">${img ? `<img src="${e(img)}" alt="" referrerpolicy="no-referrer" class="w-14 h-14 rounded-lg object-cover bg-oro-g shrink-0"/>` : '<div class="w-14 h-14 rounded-lg bg-oro-g shrink-0"></div>'}<div class="min-w-0 flex-1"><p class="text-sm font-semibold truncate">${e(it.title)}</p><p class="text-xs text-gray-500">Qty ${q} \u00d7 ${inr(pr)}</p></div><p class="text-sm font-bold">${inr(pr * q)}</p></div>`; }).join('') || '<p class="text-sm text-gray-500 py-2">No items recorded.</p>'}</div>
+      ${extra > 0.5 ? `<div class="flex justify-between text-sm pt-3 border-t border-gray-100 mt-1"><span class="text-gray-500">Delivery &amp; other charges</span><span class="font-semibold">${inr(extra)}</span></div>` : ''}</section>
+    <section class="rounded-xl bg-oro-g p-4 flex flex-wrap items-center justify-between gap-3"><span class="text-xs font-bold px-3 py-1.5 rounded-full bg-oro-c text-white">${cod ? 'Payment: Cash on Delivery (COD)' : 'Payment: ' + e(o.payment_method)}</span><div class="text-right"><p class="text-[11px] text-gray-500">Grand total</p><p class="text-2xl font-extrabold text-oro-o">${inr(total)}</p></div></section>
+    <section class="rounded-xl border border-gray-200 p-4"><p class="text-xs font-bold uppercase tracking-wide text-gray-500 mb-3">Fulfillment</p>
+      <label class="block text-xs font-semibold mb-1" for="oStatus">Order status</label>
+      <select id="oStatus" class="${IN}">${STATUSES.map((st) => `<option ${st === o.status ? 'selected' : ''}>${st}</option>`).join('')}</select>
+      <div class="flex flex-col sm:flex-row gap-2 mt-3"><button id="oSave" type="button" onclick="saveOrderStatus()" class="h-11 flex-1 bg-oro-o hover:bg-oro-oh text-white rounded-md text-sm font-semibold flex items-center justify-center gap-2 disabled:opacity-50">Save Status</button>
+      <button type="button" onclick="orderWhatsApp()" class="h-11 flex-1 bg-[#25D366] hover:bg-[#1ebe5a] text-white rounded-md text-sm font-semibold flex items-center justify-center gap-2"><i data-lucide="message-circle" class="w-4 h-4"></i>Open in WhatsApp</button></div>
+      <button type="button" onclick="deleteOrder(curOrder,true)" class="mt-2 h-10 w-full border border-red-300 text-red-600 hover:bg-red-50 rounded-md text-sm font-semibold flex items-center justify-center gap-2"><i data-lucide="trash-2" class="w-4 h-4"></i>Delete this order permanently</button></section>`;
+  $('oModal').classList.remove('hidden'); $('oModal').classList.add('flex'); oroIcons();
+}
+function closeOrder() { $('oModal').classList.add('hidden'); $('oModal').classList.remove('flex'); curOrder = -1; }
+document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && curOrder > -1) closeOrder(); });
+function orderWhatsApp() {
+  const o = ordersCache[curOrder]; if (!o) return;
+  const num = phoneDigits(o.customer_phone); if (!num) return toast('This order has no phone number.');
+  const st = $('oStatus') ? $('oStatus').value : o.status;
+  const msg = `Hello ${o.customer_name || 'there'}, thank you for shopping with Oro! \ud83d\udecd\ufe0f\nYour order ${o.order_number} (${inr(o.total_amount)}, Cash on Delivery) is ${st}.\nWe'll keep you updated on delivery.`;
+  window.open(`https://wa.me/${num}?text=${encodeURIComponent(msg)}`, '_blank', 'noopener');
+}
+async function saveOrderStatus() {
+  const o = ordersCache[curOrder]; if (!o) return;
+  if (!db) return toast('Supabase isn\u2019t configured.');
+  const st = $('oStatus').value, b = $('oSave'); b.disabled = true; b.innerHTML = SPIN + 'Saving\u2026';
+  try {
+    const { data, error } = await db.from('orders').update({ status: st }).eq('id', o.id).select('id');
+    if (error) throw error;
+    if (!data || !data.length) throw new Error('No order was updated (blocked by database permissions).');
+    o.status = st; toast(`Order ${o.order_number} \u2192 ${st}`); closeOrder(); if (cur === 'orders') renderOrders();
+  } catch (x) { toast('Update failed: ' + (x.message || x)); if ($('oSave')) { b.disabled = false; b.textContent = 'Save Status'; } }
+}
+
+async function deleteOrder(i, fromModal) {
+  const o = ordersCache[i]; if (!o || !db) return;
+  if (!confirm(`Permanently delete order #${o.order_number} (${o.customer_name || 'customer'}, ${inr(o.total_amount)})? This cannot be undone.`)) return;
+  try {
+    const { data, error } = await db.from('orders').delete().eq('id', o.id).select('id');
+    if (error) throw error;
+    if (!data || !data.length) throw new Error('The database blocked the delete. Run oro-admin-fix.sql in Supabase, then sign in again.');
+    ordersCache.splice(i, 1); curOrder = -1; if (fromModal) closeOrder();
+    toast(`Order ${o.order_number} deleted`); if (cur === 'orders') renderOrders();
+  } catch (x) { toast('Delete failed: ' + dbMsg(x, 'orders')); }
+}
+</script>
+
+<script>
+// ---- Smart coupon generator ----
+let couponsCache = [];
+const CP_PREFIX = ['ORO', 'DEAL', 'VIP', 'SAVE', 'FLASH'], CP_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+function genCode() {
+  const have = new Set(couponsCache.map((c) => String(c.code).toUpperCase()));
+  for (let n = 0; n < 60; n++) {
+    const len = 3 + Math.floor(Math.random() * 2), a = new Uint32Array(len); crypto.getRandomValues(a);
+    const code = CP_PREFIX[Math.floor(Math.random() * CP_PREFIX.length)] + '-' + [...a].map((v) => CP_CHARS[v % CP_CHARS.length]).join('');
+    if (!have.has(code)) return code;
+  }
+  return 'ORO-' + Date.now().toString(36).toUpperCase().slice(-5);
+}
+async function coupons() {
+  $('view').innerHTML = head('Coupons') + '<p class="text-sm text-gray-500">Loading\u2026</p>';
+  couponsCache = await fetchAll('coupons'); if (cur !== 'coupons') return;
+  renderCoupons();
+}
+function renderCoupons() {
+  const disc = (c) => e([Number(c.discount_percent) ? c.discount_percent + '% OFF' : '', Number(c.flat_discount) ? inr(c.flat_discount) + ' OFF' : ''].filter(Boolean).join(' + ') || '\u2014');
+  $('view').innerHTML = head('Coupons', `<span class="text-xs text-gray-500">${couponsCache.length} total</span>`) +
+    `<form id="cpForm" class="bg-white rounded-xl border border-gray-200 p-4 md:p-5 mb-4 space-y-3"><p class="text-sm font-bold">Generate Smart Coupon</p>
+      <div class="flex flex-col sm:flex-row gap-2"><input id="cpCode" class="${IN} font-mono uppercase tracking-wider" placeholder="Click Generate \u2192" aria-label="Coupon code" autocomplete="off"/><button type="button" onclick="$('cpCode').value=genCode()" class="h-11 px-4 shrink-0 border border-oro-o text-oro-o hover:bg-orange-50 rounded-md text-sm font-semibold">\ud83c\udfb2 Generate Unique Code</button></div>
+      <div class="grid sm:grid-cols-3 gap-3">
+        <div><label class="block text-xs font-semibold mb-1" for="cpType">Discount type</label><select id="cpType" class="${IN}" onchange="$('cpVal').placeholder=this.value==='percent'?'e.g. 20':'e.g. 200'"><option value="percent">Percentage (%)</option><option value="flat">Flat Off (\u20b9)</option></select></div>
+        <div><label class="block text-xs font-semibold mb-1" for="cpVal">Value</label><input id="cpVal" type="number" min="1" step="any" class="${IN}" placeholder="e.g. 20"/></div>
+        <div><label class="block text-xs font-semibold mb-1" for="cpLimit">Usage limit (customers)</label><input id="cpLimit" type="number" min="1" step="1" value="100" class="${IN}"/></div></div>
+      <div class="flex items-center gap-3"><button id="cpSave" class="h-11 px-5 bg-oro-o hover:bg-oro-oh text-white rounded-md text-sm font-semibold disabled:opacity-50">Create Coupon</button><p id="cpErr" class="text-xs text-red-600"></p></div></form>` +
+    (couponsCache.length ? `<div class="bg-white rounded-xl border border-gray-200 overflow-x-auto"><table class="w-full text-sm min-w-[560px]"><thead class="text-xs text-gray-500 text-left"><tr><th class="px-4 py-3 font-semibold">Code</th><th class="px-4 py-3 font-semibold">Discount</th><th class="px-4 py-3 font-semibold">Usage</th><th class="px-4 py-3 font-semibold">Status</th><th class="px-4 py-3"></th></tr></thead><tbody class="divide-y divide-gray-100">
+      ${couponsCache.map((c, i) => `<tr><td class="px-4 py-3"><span class="inline-block font-mono font-bold text-oro-o bg-orange-50 border border-orange-200 px-2.5 py-1 rounded-md">${e(c.code)}</span></td><td class="px-4 py-3 font-semibold">${disc(c)}</td><td class="px-4 py-3 tabular-nums">${Number(c.used_count || 0)} / ${e(c.max_users ?? '\u221e')}</td>
+        <td class="px-4 py-3"><span class="text-xs font-semibold px-2 py-1 rounded-full ${c.is_active === false ? 'bg-gray-100 text-gray-600' : 'bg-emerald-100 text-emerald-700'}">${c.is_active === false ? 'Inactive' : 'Active'}</span></td>
+        <td class="px-4 py-3 text-right whitespace-nowrap"><button onclick="toggleCoupon(${i})" class="text-xs font-semibold px-2.5 py-1.5 border border-gray-300 hover:border-oro-o rounded-md mr-1">${c.is_active === false ? 'Activate' : 'Deactivate'}</button><button onclick="delCoupon(${i})" aria-label="Delete coupon" class="p-1.5 hover:text-red-600 align-middle"><i data-lucide="trash-2" class="w-4 h-4"></i></button></td></tr>`).join('')}</tbody></table></div>` : empty('No coupons yet. Generate your first code above.'));
+  $('cpForm').onsubmit = saveCoupon; oroIcons();
+}
+async function saveCoupon(ev) {
+  ev.preventDefault(); const err = $('cpErr'); err.textContent = '';
+  if (!db) return (err.textContent = 'Supabase isn\u2019t configured.');
+  const code = $('cpCode').value.toUpperCase().replace(/\s+/g, ''), type = $('cpType').value, val = Number($('cpVal').value), lim = Math.floor(Number($('cpLimit').value));
+  if (!code) return (err.textContent = 'Click \u201cGenerate Unique Code\u201d first.');
+  if (!/^[A-Z0-9-]{3,20}$/.test(code)) return (err.textContent = 'Code must be 3\u201320 letters, numbers or dashes.');
+  if (!(val > 0)) return (err.textContent = 'Enter a discount value.');
+  if (type === 'percent' && val > 100) return (err.textContent = 'Percentage cannot exceed 100.');
+  if (type === 'flat' && val > 100000) return (err.textContent = 'Flat discount is too large.');
+  if (!(lim >= 1)) return (err.textContent = 'Usage limit must be at least 1.');
+  if (couponsCache.some((c) => String(c.code).toUpperCase() === code)) return (err.textContent = 'This code already exists. Generate another.');
+  const b = $('cpSave'); b.disabled = true; b.innerHTML = SPIN + 'Saving\u2026';
+  try {
+    await saveRow('coupons', null, { code, discount_percent: type === 'percent' ? val : 0, flat_discount: type === 'flat' ? val : 0, max_users: lim, used_count: 0, is_active: true }, 'code', ['used_count']);
+    toast(`Coupon ${code} created`); coupons();
+  } catch (x) { err.textContent = x.message || 'Save failed'; toast('Coupon save failed: ' + (x.message || x)); b.disabled = false; b.textContent = 'Create Coupon'; }
+}
+async function toggleCoupon(i) {
+  const c = couponsCache[i]; if (!c || !db) return; const next = c.is_active === false;
+  try { const { data, error } = await db.from('coupons').update({ is_active: next }).eq('code', c.code).select('code'); if (error) throw error; if (!data || !data.length) throw new Error('blocked by database permissions'); c.is_active = next; toast(`${c.code} ${next ? 'activated' : 'deactivated'}`); renderCoupons(); }
+  catch (x) { toast('Update failed: ' + (x.message || x)); }
+}
+async function delCoupon(i) {
+  const c = couponsCache[i]; if (!c || !db || !confirm(`Delete coupon ${c.code}? This cannot be undone.`)) return;
+  try { const { data, error } = await db.from('coupons').delete().eq('code', c.code).select('code'); if (error) throw error; if (!data || !data.length) throw new Error('blocked by database permissions'); toast('Coupon deleted'); coupons(); }
+  catch (x) { toast('Delete failed: ' + dbMsg(x, 'coupons')); }
+}
+
+// ---- Generic CRUD list ----
+let rowsCache = [];
+async function list(t) {
+  const d = T[t];
+  $('view').innerHTML = head(d.label) + '<p class="text-sm text-gray-500">Loading\u2026</p>';
+  rowsCache = await fetchAll(t, t === 'products' ? null : 'created_at'); if (cur !== t) return;
+  $('view').innerHTML = head(d.label, `${t === 'products' ? '<button onclick="refreshStorefront()" class="h-10 px-3 border border-gray-300 hover:border-oro-o rounded-md text-sm font-semibold flex items-center gap-1.5 ml-auto"><i data-lucide="refresh-cw" class="w-4 h-4"></i>Refresh Storefront</button>' : ''}<button onclick="openForm('${t}')" class="h-10 px-4 bg-oro-o hover:bg-oro-oh text-white text-sm font-semibold rounded-md flex items-center gap-1.5"><i data-lucide="plus" class="w-4 h-4"></i>Add</button>`) +
+    (rowsCache.length ? `<div class="space-y-2">${rowsCache.map((r, i) => { const [img, a, b] = d.row(r);
+      return `<div class="bg-white rounded-xl border border-gray-200 p-3 flex items-center gap-3">${safeUrl(img) ? `<img src="${e(safeUrl(img))}" alt="" class="w-14 h-14 rounded-lg object-cover bg-oro-g shrink-0"/>` : ''}<div class="min-w-0 flex-1"><p class="font-semibold truncate">${e(a)}</p><p class="text-xs text-gray-500 truncate">${e(b)}</p></div><button onclick="openForm('${t}',${i})" aria-label="Edit" class="p-2 hover:text-oro-o"><i data-lucide="pencil" class="w-4 h-4"></i></button><button onclick="del('${t}',${i})" aria-label="Delete" class="p-2 hover:text-red-600"><i data-lucide="trash-2" class="w-4 h-4"></i></button></div>`; }).join('')}</div>`
+    : empty(`No ${d.label.toLowerCase()} yet. Use \u201cAdd\u201d to create the first one.`));
+  oroIcons();
+}
+async function del(t, i) {
+  const r = rowsCache[i]; if (!r || !db || !confirm('Delete this item? This cannot be undone.')) return;
+  try {
+    const { data, error } = await db.from(t).delete().eq(T[t].pk, r[T[t].pk]).select(T[t].pk);
+    if (error) throw error;
+    if (!data || !data.length) throw new Error('blocked by database permissions');
+    toast('Deleted'); go(t);
+  } catch (x) { toast('Delete failed: ' + dbMsg(x, t)); }
+}
+
+// ---- Form modal + Cloudinary ----
+let form = null;
+const IN = 'w-full h-11 px-3 text-sm border border-gray-300 rounded-md bg-white focus:outline-none focus:border-oro-o focus:ring-1 focus:ring-oro-o';
+const opts = (arr, v) => ['<option value="">Select a category</option>', ...arr.map((c) => `<option ${c === v ? 'selected' : ''}>${e(c)}</option>`)].join('');
+async function openForm(t, i) {
+  const d = T[t], r = i == null ? null : rowsCache[i];
+  form = { t, r, imgs: {}, busy: 0, total: 0, done: 0, saving: false, chain: Promise.resolve(), rating: Number(r?.rating) || 0, slugEdited: !!r, pos: parsePos(r?.image_position) };
+  $('mTitle').textContent = (r ? 'Edit ' : 'Add ') + d.label.replace(/s$/, '').toLowerCase();
+  $('mErr').textContent = '';
+  $('mBody').innerHTML = d.fields.map((x) => {
+    const v = r ? r[x.k] : x.def, id = `f_${x.k}`;
+    const lab = (extra = '') => `<label class="block text-xs font-semibold mb-1" for="${id}">${x.l}${extra}</label>`;
+    if (x.t === 'bool') return `<label class="flex items-center justify-between gap-3 py-2.5 px-3 border border-gray-200 rounded-lg text-sm cursor-pointer"><span>${x.l}</span><input id="${id}" type="checkbox" ${v ? 'checked' : ''} class="accent-orange-500 w-5 h-5"/></label>`;
+    if (x.t === 'autodisc') return `<div id="discBadge" class="hidden self-start inline-block bg-oro-o text-white text-xs font-bold px-3 py-1.5 rounded-full" aria-live="polite"></div>`;
+    if (x.t === 'prodlink') return lab() + `<input id="f_tsearch" class="${IN} mb-2" placeholder="Search products by name or ID\u2026" autocomplete="off" oninput="fillProdSelect(this.value)" aria-label="Search products"/><select id="${id}" class="${IN}" data-v="${e(v)}" onchange="pickProd()"><option value="">None (no direct link)</option>${v ? `<option value="${e(v)}" selected>${e(v)} (loading\u2026)</option>` : ''}</select><input id="f_target_manual" inputmode="numeric" class="${IN} mt-2 font-mono" autocomplete="off" placeholder="\u2026or paste a numeric Product ID (e.g. 10482)" value="${e(v)}" oninput="typeProdId()"/><div id="linkPrev" class="mt-2 p-3 rounded-lg border border-dashed border-gray-300 bg-oro-g"></div>`;
+    if (x.t === 'area') return lab() + `<textarea id="${id}" rows="3" class="${IN} h-auto py-2">${e(v)}</textarea>`;
+    if (x.t === 'cat') return lab() + `<select id="${id}" class="${IN}" data-v="${e(v)}">${opts(DEFAULT_CATS, v)}</select>`;
+    if (x.t === 'title') return lab() + `<input id="${id}" class="${IN}" value="${e(v)}" oninput="autoSlug()" placeholder="e.g. Smart Watch"/>`;
+    if (x.t === 'pid') return lab() + `<div class="flex gap-2"><input id="${id}" class="${IN} font-mono" value="${e(v)}" readonly inputmode="numeric" placeholder="auto-generated"/>${r ? '' : '<button type="button" onclick="newPid()" class="h-11 px-3 border border-gray-300 rounded-md text-xs font-semibold hover:border-oro-o whitespace-nowrap">\ud83c\udfb2 New</button><button type="button" onclick="editSlug()" class="h-11 px-3 border border-gray-300 rounded-md text-xs font-semibold hover:border-oro-o flex items-center gap-1"><i data-lucide="pencil" class="w-3.5 h-3.5"></i>Edit</button>'}</div>${r ? '' : '<p class="text-[11px] text-gray-500 mt-1">Unique 5-digit ID assigned automatically. Tap Edit to type your own.</p>'}`;
+    if (x.t === 'slug') return lab() + `<div class="flex gap-2"><input id="${id}" class="${IN} font-mono" value="${e(v)}" readonly placeholder="auto-generated"/>${r ? '' : '<button type="button" onclick="editSlug()" class="h-11 px-3 border border-gray-300 rounded-md text-xs font-semibold hover:border-oro-o flex items-center gap-1"><i data-lucide="pencil" class="w-3.5 h-3.5"></i>Edit</button>'}</div>`;
+    if (x.t === 'stars') return `<div><p class="text-xs font-semibold mb-1">${x.l}</p><div class="flex flex-wrap items-center gap-x-4 gap-y-2"><div class="flex items-center gap-2"><div id="stars" class="flex"></div><span id="starLbl" class="text-sm font-semibold tabular-nums"></span></div><input id="f_review_count" inputmode="numeric" class="${IN} !w-40" placeholder="e.g. 2,450" aria-label="Review count" value="${r?.review_count ? Number(r.review_count).toLocaleString('en-IN') : ''}"/></div></div>`;
+    if (x.t === 'images') {
+      const cur = r ? (x.single ? (v ? [v] : []) : (v || [])) : [];
+      form.imgs[x.k] = cur.map((u) => ({ url: u }));
+      return `<div>${lab(` <span class="font-normal text-gray-500">(up to ${x.max})</span>`).replace(/ for="[^"]*"/, '')}<div id="g_${x.k}" class="grid grid-cols-3 sm:grid-cols-4 gap-2 mb-2"></div><p id="rdy_${x.k}" class="hidden mb-2"></p>
+        <label id="dz_${x.k}" class="flex flex-col items-center justify-center text-center gap-1 px-4 py-6 border-2 border-dashed border-gray-300 hover:border-oro-o rounded-xl bg-oro-g cursor-pointer transition-colors" ondragover="event.preventDefault();this.classList.add('border-oro-o')" ondragleave="this.classList.remove('border-oro-o')" ondrop="event.preventDefault();this.classList.remove('border-oro-o');upload('${x.k}',Array.from(event.dataTransfer.files))">
+          <svg class="w-9 h-9 text-oro-o" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18a4 4 0 01-.6-7.95A6 6 0 0118 9a4.5 4.5 0 01-.5 9H16"/><path d="M12 12v8M9 15l3-3 3 3"/></svg>
+          <span class="text-sm font-semibold">Tap to select product photos (Up to ${x.max} images)</span>
+          <span class="text-xs text-gray-500">Auto-compresses and uploads directly to Cloudinary</span>
+          <input type="file" accept="image/*" ${x.single ? '' : 'multiple'} class="hidden" onchange="const fl=Array.from(this.files);this.value='';upload('${x.k}',fl)"/></label></div>${t === 'banners' ? ADJ : ''}`;
+    }
+    return lab() + `<input id="${id}" type="${x.t === 'number' ? 'number' : 'text'}" step="any" class="${IN} ${x.t === 'slug' ? 'font-mono' : ''}" value="${e(v)}" ${t === 'products' && (x.k === 'price' || x.k === 'old_price') ? 'oninput="calcDiscount()"' : ''} ${t === 'coupons' && x.k === 'code' && r ? 'readonly' : ''}/>`;
+  }).join('');
+  Object.keys(form.imgs).forEach(gallery); if ($('stars')) drawStars(); syncSave();
+  $('modal').classList.remove('hidden'); $('modal').classList.add('flex'); oroIcons();
+  calcDiscount();
+  if ($('f_target_product_id')) loadProductPicker();
+  if (t === 'products' && !r) initPid();
+  if (t === 'banners') renderAdj();
+  if ($('f_category')) loadCats(); // instant fallback above, live list replaces it when ready
+}
+async function loadCats() {
+  try {
+    const names = (await fetchAll('categories', null)).map((c) => c.name).filter(Boolean);
+    const el = $('f_category'); if (!el || !names.length) return;
+    const v = el.value || el.dataset.v; if (v && !names.includes(v)) names.push(v);
+    el.innerHTML = opts(names, v);
+  } catch (x) { /* keep fallback list */ }
+}
+const discPct = (price, old) => { price = Number(price) || 0; old = Number(old) || 0; return old > price && price > 0 ? Math.round(((old - price) / old) * 100) : 0; };
+function calcDiscount() {
+  const priceInput = $('f_price'), oldPriceInput = $('f_old_price'), discountBadge = $('discBadge');
+  if (!priceInput || !oldPriceInput || !discountBadge) return 0;
+  const price = parseFloat(priceInput.value) || 0, oldPrice = parseFloat(oldPriceInput.value) || 0;
+  if (oldPrice > price && price > 0) {
+    const pct = Math.round(((oldPrice - price) / oldPrice) * 100);
+    discountBadge.textContent = `Auto Discount: -${pct}% OFF`;
+    discountBadge.classList.remove('hidden');
+    return pct;
+  }
+  discountBadge.classList.add('hidden');
+  return 0;
+}
+let prodCache = [];
+async function loadProductPicker() {
+  try { prodCache = await fetchAll('products', null); fillProdSelect(); linkPrev(); } catch (x) { /* keep placeholder option */ }
+}
+function fillProdSelect(q = '') {
+  const el = $('f_target_product_id'); if (!el) return;
+  const cur = ($('f_target_manual').value || el.dataset.v || '').trim(), qq = String(q).toLowerCase().trim();
+  const list = prodCache.filter((p) => !qq || String(p.title).toLowerCase().includes(qq) || String(p.id).toLowerCase().includes(qq));
+  el.innerHTML = '<option value="">None (no direct link)</option>' + list.map((p) => `<option value="${e(p.id)}" ${String(p.id) === cur ? 'selected' : ''}>${e(p.title)} \u2014 [ID: ${e(p.id)}]</option>`).join('');
+}
+function pickProd() { $('f_target_manual').value = $('f_target_product_id').value; linkPrev(); }
+function typeProdId() { const v = $('f_target_manual').value.trim(), el = $('f_target_product_id'); el.value = [...el.options].some((o) => o.value === v) ? v : ''; linkPrev(); }
+function linkPrev() {
+  const box = $('linkPrev'); if (!box) return;
+  const v = $('f_target_manual').value.trim();
+  if (!v) return (box.innerHTML = '<p class="text-xs text-gray-500">No product linked. The banner will only be displayed.</p>');
+  const p = prodCache.find((q) => String(q.id) === v);
+  box.innerHTML = p ? `<div class="flex items-center gap-3">${safeUrl((p.images || [])[0]) ? `<img src="${e(safeUrl(p.images[0]))}" alt="" class="w-14 h-14 rounded-lg object-cover bg-white shrink-0"/>` : ''}<div class="min-w-0"><p class="text-[11px] font-semibold text-emerald-700">\u2713 Linked product</p><p class="text-sm font-semibold truncate">${e(p.title)}</p><p class="text-xs text-gray-500">${inr(p.price)} \u00b7 ID: ${e(p.id)}</p></div></div>` : `<p class="text-xs text-red-600">No product found with ID \u201c${e(v)}\u201d.</p>`;
+}
+// ---- Product ID (unique 5-digit) ----
+let pidSet = new Set();
+function newPid() { let id; do { id = String(10000 + Math.floor(Math.random() * 90000)); } while (pidSet.has(id)); const el = $('f_id'); if (el) el.value = id; return id; }
+async function initPid() {
+  newPid();
+  try { pidSet = new Set((await fetchAll('products', null)).map((p) => String(p.id))); if (form && !form.slugEdited && pidSet.has($('f_id')?.value)) newPid(); } catch (x) { /* collision is still caught on save */ }
+}
+// ---- Banner frame adjuster ----
+const clamp = (n) => Math.max(0, Math.min(100, n));
+function parsePos(s) { const m = /(-?[\d.]+)%\s+(-?[\d.]+)%/.exec(s || ''); return m ? { x: clamp(+m[1]), y: clamp(+m[2]) } : { x: 50, y: 50 }; }
+const ADJ = `<div id="adj" class="hidden rounded-xl border border-gray-200 p-3 -mt-1">
+  <p class="inline-block text-[11px] font-semibold bg-orange-50 text-oro-o border border-orange-200 rounded-full px-3 py-1 mb-2">Banner Frame Active: Adjust image position to fit frame perfectly.</p>
+  <div class="np relative w-full aspect-[1360/400] rounded-lg overflow-hidden bg-oro-g ring-2 ring-oro-o" onpointerdown="startDrag(event)" onpointermove="moveDrag(event)" onpointerup="endDrag()" onpointercancel="endDrag()"><img id="adjD" alt="Banner preview" draggable="false" class="w-full h-full object-cover pointer-events-none select-none"/><span class="absolute top-2 left-2 text-[10px] font-semibold bg-black/60 text-white rounded px-2 py-0.5">Desktop</span></div>
+  <div class="flex items-end gap-3 mt-2"><div class="w-28 shrink-0"><div class="relative aspect-[390/200] rounded-md overflow-hidden bg-oro-g ring-1 ring-gray-300"><img id="adjM" alt="Mobile preview" draggable="false" class="w-full h-full object-cover"/></div><p class="text-[10px] text-gray-500 mt-0.5">Mobile</p></div>
+  <div class="flex-1 space-y-1"><label class="flex items-center gap-2 text-xs"><span class="w-16 text-gray-500">Horizontal</span><input id="posX" type="range" min="0" max="100" class="flex-1 accent-orange-500" oninput="setPos(+this.value,form.pos.y)"/></label>
+  <label class="flex items-center gap-2 text-xs"><span class="w-16 text-gray-500">Vertical</span><input id="posY" type="range" min="0" max="100" class="flex-1 accent-orange-500" oninput="setPos(form.pos.x,+this.value)"/></label>
+  <p class="text-[11px] text-gray-500">Position: <span id="posLbl" class="font-mono"></span> \u00b7 drag the preview to reposition</p></div></div></div>`;
+function renderAdj() {
+  const box = $('adj'); if (!box || !form) return;
+  const m = (form.imgs.image_url || [])[0]; if (!m) return box.classList.add('hidden');
+  box.classList.remove('hidden'); const src = m.url || m.local, op = `${form.pos.x}% ${form.pos.y}%`;
+  ['adjD', 'adjM'].forEach((id) => { const im = $(id); if (im.getAttribute('src') !== src) im.src = src; im.style.objectPosition = op; });
+  $('posX').value = form.pos.x; $('posY').value = form.pos.y; $('posLbl').textContent = `${Math.round(form.pos.x)}% / ${Math.round(form.pos.y)}%`;
+}
+function setPos(x, y) { if (!form) return; form.pos = { x: clamp(x), y: clamp(y) }; renderAdj(); }
+let drag = null;
+function startDrag(ev) { if (!form) return; ev.currentTarget.setPointerCapture(ev.pointerId); drag = { x: ev.clientX, y: ev.clientY, px: form.pos.x, py: form.pos.y, w: ev.currentTarget.clientWidth, h: ev.currentTarget.clientHeight }; }
+function moveDrag(ev) { if (!drag || !form) return; setPos(drag.px - (ev.clientX - drag.x) / drag.w * 100 * 1.5, drag.py - (ev.clientY - drag.y) / drag.h * 100 * 1.5); }
+function endDrag() { drag = null; }
+// Insert/update that retries without optional columns the table doesn't have (e.g. a missing discount_percent)
+async function saveRow(t, r, row, pk, optional = []) {
+  const skipped = [];
+  for (let i = 0; i <= optional.length; i++) {
+    const { data, error } = r ? await db.from(t).update(row).eq(pk, r[pk]).select(pk) : await db.from(t).insert([row]);
+    if (!error && r && (!data || !data.length)) throw new Error('Nothing was updated (blocked by database permissions, or the item no longer exists).');
+    if (!error) return skipped;
+    const m = /Could not find the '([^']+)' column/.exec(error.message || '');
+    if (m && optional.includes(m[1]) && m[1] in row) { delete row[m[1]]; skipped.push(m[1]); continue; }
+    throw error;
+  }
+  return skipped;
+}
+function autoSlug() { /* product IDs are numeric now (see newPid) */ }
+function editSlug() { form.slugEdited = true; const el = $('f_id'); el.readOnly = false; el.focus(); }
+function drawStars() {
+  const v = form.rating;
+  $('stars').innerHTML = [1, 2, 3, 4, 5].map((n) => `<span class="relative w-8 h-8 text-3xl leading-8 text-gray-300 select-none"><span class="absolute inset-0 overflow-hidden text-amber-400" style="width:${Math.max(0, Math.min(1, v - (n - 1))) * 100}%">\u2605</span>\u2605<button type="button" aria-label="${n - 0.5} stars" onclick="setRating(${n - 0.5})" class="absolute left-0 top-0 w-1/2 h-full"></button><button type="button" aria-label="${n} stars" onclick="setRating(${n})" class="absolute right-0 top-0 w-1/2 h-full"></button></span>`).join('');
+  $('starLbl').textContent = v ? `${v.toFixed(1)} / 5.0` : 'Not rated';
+}
+function setRating(v) { form.rating = v; drawStars(); }
+function closeModal() { if (form) { Object.values(form.imgs).flat().forEach((m) => { m.removed = true; m.local && URL.revokeObjectURL(m.local); }); form = null; } $('modal').classList.add('hidden'); $('modal').classList.remove('flex'); }
+const SPIN = '<span class="inline-block w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin"></span>';
+const uploadedImageUrls = () => Object.values(form.imgs).flat().map((m) => m.url).filter(Boolean);
+
+// Save button reflects upload / save progress
+function syncSave() {
+  const b = $('mSave'); if (!b || !form) return;
+  const label = form.t === 'products' ? 'Save Product' : 'Save';
+  if (form.saving) { b.disabled = true; b.innerHTML = SPIN + 'Saving to Database...'; }
+  else if (form.busy > 0) { b.disabled = true; b.innerHTML = `${SPIN}Uploading Images (${form.done} / ${form.total})...`; }
+  else { b.disabled = false; b.textContent = label; }
+}
+
+function gallery(k) {
+  if (!form || !$('g_' + k)) return;
+  $('g_' + k).innerHTML = form.imgs[k].map((m, i) => {
+    const overlay = m.status === 'uploading' ? '<div class="absolute inset-0 bg-black/55 flex flex-col items-center justify-center gap-1 text-white text-[10px] font-semibold"><span class="w-5 h-5 border-2 border-white/40 border-t-white rounded-full animate-spin"></span>Uploading...</div>'
+      : m.status === 'queued' ? '<div class="absolute inset-0 bg-black/40 flex items-center justify-center text-white text-[10px] font-semibold">Waiting...</div>'
+      : m.status === 'done' && form.busy > 0 ? '<span class="absolute bottom-1 left-1 right-1 text-center rounded bg-emerald-600 text-white text-[10px] font-semibold py-0.5">\u2713 Uploaded</span>'
+      : m.status === 'failed' ? '<div class="absolute inset-0 bg-red-600/80 flex items-center justify-center text-center text-white text-[10px] font-semibold px-1">\u2715 Upload Failed</div>' : '';
+    return `<div class="relative aspect-square rounded-lg overflow-hidden border ${m.status === 'failed' ? 'border-red-500' : 'border-gray-200'} bg-oro-g"><img src="${e(m.url || m.local)}" alt="" class="w-full h-full object-cover"/>${overlay}<button type="button" onclick="rmImg('${k}',${i})" aria-label="Remove image" class="absolute top-1 right-1 w-6 h-6 rounded-full bg-oro-c/85 text-white text-xs leading-6 z-10">\u2715</button></div>`;
+  }).join('');
+  const n = form.imgs[k].filter((m) => m.url).length, bad = form.imgs[k].some((m) => m.status === 'failed');
+  const rdy = $('rdy_' + k);
+  rdy.classList.toggle('hidden', !(n && !form.busy && !bad));
+  if (k === 'image_url') renderAdj();
+  rdy.innerHTML = `<span class="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700">\u2713 ${n} ${n === 1 ? 'Image' : 'Images'} Ready</span>`;
+}
+function rmImg(k, i) {
+  const m = form.imgs[k][i]; if (!m) return;
+  m.removed = true; // an in-flight upload for this thumbnail is ignored when it finishes
+  if (m.local) URL.revokeObjectURL(m.local);
+  form.imgs[k].splice(i, 1); gallery(k);
+}
+
+// Shrink big phone photos (max 1600px, WebP) so mobile uploads stay light; falls back to the original file
+async function compress(file) {
+  try {
+    const bmp = await createImageBitmap(file), s = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
+    const c = document.createElement('canvas'); c.width = Math.round(bmp.width * s); c.height = Math.round(bmp.height * s);
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height); bmp.close && bmp.close();
+    const b = await new Promise((res) => c.toBlob(res, 'image/webp', 0.85));
+    c.width = c.height = 0;
+    return b && b.size < file.size ? b : file;
+  } catch (x) { return file; }
+}
+async function cloudUpload(blob) {
+  const fd = new FormData(); fd.append('file', blob); fd.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
+  const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`, { method: 'POST', body: fd });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.secure_url) throw new Error(data.error?.message || 'HTTP ' + res.status);
+  return data.secure_url.replace('/upload/', '/upload/f_webp,q_auto/');
+}
+
+// Previews appear instantly; files then upload one at a time (gentler on phones than 6 at once)
+function upload(k, files) {
+  const x = T[form.t].fields.find((q) => q.k === k), list = form.imgs[k], f0 = form;
+  const MAX_BYTES = 25 * 1024 * 1024; // SECURITY: refuse oversized files before they hit Cloudinary
+  const all = [...files].filter((q) => q.type.startsWith('image/') || /\.(heic|heif)$/i.test(q.name));
+  let picks = all.filter((q) => q.size <= MAX_BYTES);
+  if (picks.length < all.length) $('mErr').textContent = 'Some files were skipped (over 25 MB).';
+  if (!picks.length) return;
+  if (x.single) { list.forEach((m) => { m.removed = true; }); list.length = 0; }
+  if (list.length + picks.length > x.max) { picks = picks.slice(0, Math.max(0, x.max - list.length)); $('mErr').textContent = `You can add up to ${x.max} image${x.max > 1 ? 's' : ''}.`; }
+  else if (picks.length === all.length) $('mErr').textContent = '';
+  if (!picks.length) return;
+  const items = picks.map((file) => { const m = { file, local: URL.createObjectURL(file), status: 'queued' }; list.push(m); return m; });
+  if (!f0.busy) { f0.total = 0; f0.done = 0; }
+  f0.busy += items.length; f0.total += items.length; gallery(k); syncSave();
+
+  items.forEach((m) => {
+    f0.chain = f0.chain.then(async () => {
+      if (form !== f0) return; // modal was closed
+      if (!m.removed) {
+        m.status = 'uploading'; gallery(k);
+        try {
+          if (CLOUDINARY_CLOUD_NAME.includes('PASTE')) throw new Error('Cloud name not set');
+          const url = await cloudUpload(await compress(m.file));
+          if (!m.removed) { m.url = url; m.status = 'done'; }
+        } catch (err) {
+          if (!m.removed) {
+            m.status = 'failed';
+            $('mErr').textContent = 'Upload failed. Check Cloud Name & Preset in admin.html';
+            toast('Upload failed: ' + (err.message || 'unknown error') + '. Check Cloud Name & Preset in admin.html');
+          }
+        }
+      }
+      f0.busy--; f0.done++; delete m.file;
+      gallery(k); syncSave();
+      if (!f0.busy) Object.keys(f0.imgs).forEach(gallery); // all finished: drop overlays, show "X Images Ready"
+    });
+  });
+}
+
+$('mForm').onsubmit = async (ev) => {
+  ev.preventDefault(); ev.stopPropagation(); // never let the form reload the page
+  if (!form || form.saving || form.busy) return;
+  if (!db) return ($('mErr').textContent = 'Supabase isn\u2019t configured.');
+  const { t, r } = form, row = {}, d = T[t];
+  try {
+    for (const x of d.fields) {
+      if (x.t === 'autodisc') continue; // read-only badge, computed below
+      const el = $('f_' + x.k);
+      if (x.t === 'prodlink') row[x.k] = $('f_target_manual').value.trim() || el.value || null;
+      else if (x.t === 'bool') row[x.k] = el.checked;
+      else if (x.t === 'images') { const u = form.imgs[x.k].map((m) => m.url).filter(Boolean); row[x.k] = x.single ? u[0] || null : u; }
+      else if (x.t === 'stars') { row.rating = form.rating || null; row.review_count = Number(String($('f_review_count').value).replace(/,/g, '')) || 0; }
+      else if (x.t === 'number') row[x.k] = el.value === '' ? null : Number(el.value);
+      else row[x.k] = el.value.trim();
+    }
+    if (Object.values(form.imgs).flat().some((m) => m.status === 'failed')) return ($('mErr').textContent = 'Remove the failed image(s) with \u2715, or upload them again.');
+    if (t === 'products') {
+      row.id = slug(row.id) || (r ? '' : newPid());
+      if (!r && pidSet.has(row.id)) return ($('mErr').textContent = 'This Product ID is already used. Tap \ud83c\udfb2 New for another.');
+      if (!row.id || !row.title) return ($('mErr').textContent = 'Title is required.');
+      if (!row.category) return ($('mErr').textContent = 'Pick a category.');
+      if (uploadedImageUrls().length === 0) return ($('mErr').textContent = 'Add at least one product photo.');
+      const enteredPrice = Number(row.price) || 0;
+      // SECURITY: a Rs0 / negative / absurd price here would be sold as-is by the storefront
+      if (!(enteredPrice > 0) || enteredPrice > 10000000) return ($('mErr').textContent = 'Enter a valid price greater than 0.');
+      if (row.old_price != null && !(Number(row.old_price) >= 0)) return ($('mErr').textContent = 'Old price must be 0 or more.');
+      const enteredOldPrice = Number(row.old_price) || enteredPrice;
+      const pct = discPct(enteredPrice, enteredOldPrice);
+      row.price = enteredPrice;
+      row.old_price = enteredOldPrice;
+      row.mrp = enteredOldPrice;            // initial-schema column
+      row.discount = `-${pct}%`;
+      row.discount_percent = pct;
+      row.subcategory = row.subcategory || '';
+      row.description = row.description || '';
+      row.reviews_count = row.review_count; // mirror both review columns
+    }
+    if (t === 'categories') { if (!row.name) return ($('mErr').textContent = 'Name is required.'); row.id = r ? r.id : slug(row.name); }
+    if (t === 'banners') {
+      if (!row.title || !row.image_url) return ($('mErr').textContent = 'Title and image are required.');
+      if (row.target_product_id) {
+        const prods = await fetchAll('products', null);
+        if (!prods.some((p) => String(p.id) === row.target_product_id)) return ($('mErr').textContent = 'Error: Product ID does not exist. Please select an existing product from the dropdown.');
+      }
+      row.badge = row.badge_text; row.cta_text = 'Shop Now'; row.image_position = `${Math.round(form.pos.x)}% ${Math.round(form.pos.y)}%`;
+      row.id = r ? r.id : slug(row.title) + '-' + Date.now().toString(36); }
+    $('mErr').textContent = ''; form.saving = true; syncSave();
+    const pk = d.pk;
+    const skipped = await saveRow(t, r, row, pk, t === 'products' ? ['discount_percent', 'discount', 'mrp', 'reviews_count', 'review_count'] : t === 'banners' ? ['badge', 'badge_text', 'cta_text', 'image_position'] : []);
+    Object.values(form.imgs).flat().forEach((m) => m.local && URL.revokeObjectURL(m.local));
+    form = null; closeModal(); toast(t === 'products' ? 'Product published successfully!' + (skipped.length ? ` (table has no ${skipped.join(', ')} column)` : '') : 'Saved' + (skipped.length ? ` (table has no ${skipped.join(', ')} column)` : '')); go(t);
+  } catch (x) {
+    if (form) { form.saving = false; $('mErr').textContent = x.message || 'Save failed'; syncSave(); }
+  }
+};
+</script>
+
+<script>
+// ---- Store Settings (site_settings table) ----
+const SETTINGS_FIELDS = [['store_name', 'Store Name', 'text', 'Oro'], ['tagline', 'Tagline', 'text', 'Better Products. Happier You.'], ['support_email', 'Customer Support Email', 'email', 'support@oro.in'], ['support_phone', 'Support Phone / Call Number', 'tel', '+91 98765 43210'], ['whatsapp_number', 'WhatsApp Business Number', 'tel', '919876543210 (country code, no + or spaces)']];
+let settingsRow = null;
+async function settings() {
+  $('view').innerHTML = head('Store Settings') + '<p class="text-sm text-gray-500">Loading\u2026</p>';
+  const rows = await fetchAll('site_settings', null); if (cur !== 'settings') return;
+  settingsRow = rows[0] || null;
+  $('view').innerHTML = head('Store Settings') + `<form id="sForm" class="bg-white rounded-xl border border-gray-200 p-5 max-w-xl space-y-3">
+    <p class="text-xs text-gray-500">Shown on the storefront header, footer and checkout receipt.</p>
+    ${SETTINGS_FIELDS.map(([k, l, ty, ph]) => `<div><label class="block text-xs font-semibold mb-1" for="s_${k}">${l}</label><input id="s_${k}" type="${ty}" class="${IN}" placeholder="${e(ph)}" value="${e(settingsRow?.[k])}"/></div>`).join('')}
+    <div class="flex items-center gap-3 pt-2"><button id="sSave" class="h-10 px-5 bg-oro-o hover:bg-oro-oh text-white rounded-md text-sm font-semibold disabled:opacity-50">Save Store Settings</button><p id="sErr" class="text-xs text-red-600"></p></div></form>`;
+  $('sForm').onsubmit = saveSettings;
+}
+async function saveSettings(ev) {
+  ev.preventDefault();
+  if (!db) return ($('sErr').textContent = 'Supabase isn\u2019t configured.');
+  const row = {}; SETTINGS_FIELDS.forEach(([k]) => { row[k] = $('s_' + k).value.trim(); });
+  if (!row.store_name) return ($('sErr').textContent = 'Store name is required.');
+  if (row.support_email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(row.support_email)) return ($('sErr').textContent = 'Enter a valid support email.');
+  const digits = (v) => v.replace(/\D/g, '').length;
+  if (row.support_phone && (digits(row.support_phone) < 8 || digits(row.support_phone) > 15)) return ($('sErr').textContent = 'Enter a valid support phone number.');
+  if (row.whatsapp_number && (digits(row.whatsapp_number) < 10 || digits(row.whatsapp_number) > 15)) return ($('sErr').textContent = 'Enter a valid WhatsApp number with country code.');
+  $('sErr').textContent = ''; const b = $('sSave'); b.disabled = true; b.innerHTML = SPIN + 'Saving\u2026';
+  try {
+    const { data, error } = settingsRow ? await db.from('site_settings').update(row).eq('id', settingsRow.id).select() : await db.from('site_settings').insert([row]).select();
+    if (error) throw error;
+    if (data && data[0]) settingsRow = data[0];
+    toast('Store settings saved');
+  } catch (x) { $('sErr').textContent = x.message || 'Save failed'; }
+  b.disabled = false; b.textContent = 'Save Store Settings';
+}
+
+// ---- Customers directory (public.profiles, filled by a DB trigger on every signup) ----
+let custRows = [];
+async function customers() {
+  $('view').innerHTML = head('Customers') + '<p class="text-sm text-gray-500">Loading\u2026</p>';
+  if (!db) { $('view').innerHTML = head('Customers') + empty('Supabase isn\u2019t configured.'); return; }
+  let prof = [], err = '';
+  try {
+    let r = await db.from('profiles').select('*').order('created_at', { ascending: false });
+    if (r.error) r = await db.from('profiles').select('*'); // table may lack created_at
+    if (r.error) err = r.error.message; else prof = r.data || [];
+  } catch (x) { err = x.message || String(x); }
+  const ords = (await fetchAll('orders')).map(normOrder);
+  if (cur !== 'customers') return;
+  const stats = {};
+  ords.forEach((o) => { // newest first, so the first phone seen is the latest one
+    const k = String(o.customer_email || '').toLowerCase().trim(); if (!k) return;
+    const s = stats[k] || (stats[k] = { n: 0, spent: 0, phone: '' });
+    s.n++; if (o.status !== 'Cancelled') s.spent += Number(o.total_amount || 0);
+    if (!s.phone && o.customer_phone) s.phone = o.customer_phone;
+  });
+  custRows = prof.map((p) => {
+    const s = stats[String(p.email || '').toLowerCase().trim()] || { n: 0, spent: 0, phone: '' };
+    return { name: p.name || p.full_name || '', email: p.email || '', phone: s.phone || p.phone || '', joined: p.created_at || '', orders: s.n, spent: s.spent };
+  });
+  if (err) {
+    $('view').innerHTML = head('Customers') + `<div class="p-4 rounded-xl bg-amber-50 border border-amber-200 text-sm text-amber-900"><p class="font-semibold">Couldn\u2019t load the customer directory.</p><p class="text-xs mt-1">${e(err)}</p><p class="text-xs mt-2">Run <span class="font-mono">supabase-layout-setup.sql</span> (Part 3) once in the Supabase SQL editor. It creates the <span class="font-mono">profiles</span> table, the signup trigger and the admin read policy.</p></div>`;
+    return;
+  }
+  $('view').innerHTML = head('Customers', `<div class="flex items-center gap-2 ml-auto"><span id="custCount" class="text-xs text-gray-500"></span><button onclick="exportCustomers()" class="h-10 px-3 border border-gray-300 hover:border-oro-o rounded-md text-sm font-semibold flex items-center gap-1.5"><i data-lucide="download" class="w-4 h-4"></i>CSV</button></div>`) +
+    `<input id="custQ" type="search" class="${IN} mb-3 max-w-md" placeholder="Search name, email or phone\u2026" aria-label="Search customers" oninput="custFilter(this.value)" autocomplete="off"/>
+    <div class="bg-white rounded-xl border border-gray-200 overflow-x-auto"><table class="w-full text-sm min-w-[680px]"><thead class="text-xs text-gray-500 text-left"><tr><th class="px-4 py-3 font-semibold">Name</th><th class="px-4 py-3 font-semibold">Email</th><th class="px-4 py-3 font-semibold">Phone</th><th class="px-4 py-3 font-semibold">Signed up</th><th class="px-4 py-3 font-semibold text-right">Orders</th><th class="px-4 py-3 font-semibold text-right">Spent</th></tr></thead><tbody id="custBody" class="divide-y divide-gray-100"></tbody></table></div>`;
+  custFilter(''); oroIcons();
+}
+function custFilter(q) {
+  const qq = String(q || '').toLowerCase().trim();
+  const rows = custRows.filter((c) => !qq || `${c.name} ${c.email} ${c.phone}`.toLowerCase().includes(qq));
+  const body = $('custBody'); if (!body) return;
+  body.innerHTML = rows.length ? rows.map((c) => `<tr><td class="px-4 py-3 font-semibold">${e(c.name) || '\u2014'}</td><td class="px-4 py-3 break-all">${c.email ? `<a href="mailto:${e(c.email)}" class="hover:text-oro-o">${e(c.email)}</a>` : '\u2014'}</td><td class="px-4 py-3 whitespace-nowrap">${e(c.phone) || '\u2014'}</td><td class="px-4 py-3 whitespace-nowrap text-gray-600">${c.joined ? new Date(c.joined).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '\u2014'}</td><td class="px-4 py-3 text-right tabular-nums">${c.orders}</td><td class="px-4 py-3 text-right tabular-nums">${inr(c.spent)}</td></tr>`).join('')
+    : `<tr><td colspan="6" class="px-4 py-10 text-center text-gray-500">${custRows.length ? 'No customers match your search.' : 'No signups yet.'}</td></tr>`;
+  if ($('custCount')) $('custCount').textContent = qq ? `${rows.length} of ${custRows.length}` : `${custRows.length} total`;
+}
+function exportCustomers() {
+  if (!custRows.length) return toast('No customers to export.');
+  const esc = (v) => { let s = String(v ?? ''); if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; return '"' + s.replace(/"/g, '""') + '"'; }; // blocks spreadsheet formula injection
+  const lines = [['Name', 'Email', 'Phone', 'Signed up', 'Orders', 'Spent (INR)'], ...custRows.map((c) => [c.name, c.email, c.phone, c.joined ? ymd(new Date(c.joined)) : '', c.orders, c.spent])].map((r) => r.map(esc).join(','));
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['\ufeff' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' }));
+  a.download = 'oro-customers-' + ymd(new Date()) + '.csv'; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+// ---- Theme Builder: drag-and-drop section order per device (site_layout table) + live iframe preview ----
+const SECTION_META = {
+  banner: { label: 'Hero Banner Carousel', desc: 'Rotating banners from the Banners tab', icon: 'image' },
+  categories: { label: 'Category Circles', desc: 'Round category shortcuts', icon: 'layout-grid' },
+  deals: { label: 'Deals of the Day', desc: 'Product carousel', icon: 'clock' },
+  promos: { label: 'Promo Banners', desc: 'Work Smarter / Beautiful Home', icon: 'megaphone' },
+  bestsellers: { label: 'Best Sellers', desc: 'Top products grid', icon: 'flame' }
+};
+const SECTION_IDS = Object.keys(SECTION_META);
+const isBlockId = (id) => /^cb_[a-z0-9]+$/.test(id);
+const cleanSections = (a) => {
+  if (typeof a === 'string') { try { a = JSON.parse(a); } catch (x) { return null; } }
+  if (!Array.isArray(a)) return null;
+  const seen = new Set(); return a.filter((id) => (SECTION_IDS.includes(id) || isBlockId(id)) && !seen.has(id) && seen.add(id));
+};
+const PV_URL = STOREFRONT_URL + (STOREFRONT_URL.includes('?') ? '&' : '?') + 'oro_preview=1';
+let bld = null, bdrag = null;
+const bldDirty = () => !!bld && (JSON.stringify(bld.layout) !== bld.saved || JSON.stringify(bld.blocks) !== bld.savedBlocks);
+
+async function builder() {
+  $('view').innerHTML = head('Theme Builder') + '<p class="text-sm text-gray-500">Loading\u2026</p>';
+  let rows = [], loadErr = '';
+  if (db) { try { const r = await db.from('site_layout').select('device,sections'); if (r.error) loadErr = r.error.message; else rows = r.data || []; } catch (x) { loadErr = x.message || String(x); } }
+  let blocks = {}, blkErr = '';
+  if (db) { try { const r = await db.from('site_blocks').select('*'); if (r.error) blkErr = r.error.message; else (r.data || []).forEach((b) => { blocks[b.id] = { id: b.id, type: b.type, name: b.name || '', config: b.config || {} }; }); } catch (x) { blkErr = x.message || String(x); } }
+  if (cur !== 'builder') return;
+  const layout = { mobile: [...SECTION_IDS], desktop: [...SECTION_IDS] };
+  rows.forEach((r) => { const c = cleanSections(r.sections); if (c && layout[r.device]) layout[r.device] = c; });
+  bld = { layout, saved: JSON.stringify(layout), blocks, savedBlocks: JSON.stringify(blocks), dev: 'mobile', saving: false, loadErr: loadErr || (blkErr ? 'custom blocks: ' + blkErr : '') };
+  renderBuilder();
+  const onMsg = (ev) => { const fr = $('pvFrame'); if (fr && ev.source === fr.contentWindow && ev.data && ev.data.type === 'oro-preview-ready') pushPreview(); };
+  window.addEventListener('message', onMsg); window.addEventListener('resize', fitPreview);
+  const onUnload = (ev) => { if (bldDirty()) { ev.preventDefault(); ev.returnValue = ''; } };
+  window.addEventListener('beforeunload', onUnload);
+  stopNet = () => { window.removeEventListener('message', onMsg); window.removeEventListener('resize', fitPreview); window.removeEventListener('beforeunload', onUnload); bldDragCleanup(); bld = null; };
+}
+function renderBuilder() {
+  const seg = (id, dev, ic, l) => `<button id="${id}" type="button" onclick="bldDevice('${dev}')" class="flex-1 h-10 text-sm font-semibold rounded-md flex items-center justify-center gap-1.5"><i data-lucide="${ic}" class="w-4 h-4"></i>${l}</button>`;
+  $('view').innerHTML = head('Theme Builder', `<div class="flex items-center gap-2 ml-auto"><span id="bldDirty" class="hidden text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-100 text-amber-800">Unsaved changes</span><button id="bldSaveBtn" type="button" onclick="bldSave()" class="h-10 px-4 bg-oro-o hover:bg-oro-oh text-white text-sm font-semibold rounded-md disabled:opacity-50">Save &amp; Publish</button></div>`) +
+    (bld.loadErr ? `<div class="mb-4 p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900"><p class="font-semibold">Couldn\u2019t read the saved layout (${e(bld.loadErr)}).</p><p class="mt-1">Run <span class="font-mono">supabase-layout-setup.sql</span> once in the Supabase SQL editor. You can still arrange sections and preview them, but saving needs the table.</p></div>` : '') +
+    `<div class="grid xl:grid-cols-[380px_minmax(0,1fr)] gap-4 items-start">
+      <div class="bg-white rounded-xl border border-gray-200 p-4 min-w-0">
+        <div class="flex gap-1 p-1 bg-oro-g rounded-lg mb-3" role="tablist" aria-label="Device layout">${seg('bldTabM', 'mobile', 'smartphone', 'Mobile')}${seg('bldTabD', 'desktop', 'monitor', 'Desktop')}</div>
+        <p class="text-xs text-gray-500 mb-3">Drag the <span class="font-semibold">\u22ee\u22ee</span> handle (or use the arrows) to reorder. The eye hides a section on this device. The preview updates instantly; press Save &amp; Publish to go live.</p>
+        <ul id="bldList" class="space-y-2"></ul>
+        <p class="text-xs font-bold uppercase tracking-wide text-gray-500 mt-4 mb-2">Hidden on <span id="bldDevName"></span></p>
+        <ul id="bldHidden" class="space-y-2"></ul>
+        <div class="flex items-center justify-between mt-4 mb-2"><p class="text-xs font-bold uppercase tracking-wide text-gray-500">Custom blocks</p><button type="button" onclick="bldEdit()" class="h-9 px-3 bg-oro-o hover:bg-oro-oh text-white rounded-md text-xs font-semibold">+ Add block</button></div><button type="button" onclick="bldCopyCode()" class="mb-2 h-8 px-3 border border-gray-300 hover:border-oro-o rounded-md text-xs font-semibold">Copy storefront code</button><ul id="bldBlocks" class="space-y-2"></ul>
+        <div class="flex flex-wrap gap-2 mt-4 pt-4 border-t border-gray-100">
+          <button id="bldCopy" type="button" onclick="bldCopy()" class="h-9 px-3 border border-gray-300 hover:border-oro-o rounded-md text-xs font-semibold"></button>
+          <button type="button" onclick="bldDiscard()" class="h-9 px-3 border border-gray-300 hover:border-oro-o rounded-md text-xs font-semibold">Discard changes</button>
+          <button type="button" onclick="bldReset()" class="h-9 px-3 border border-gray-300 hover:border-oro-o rounded-md text-xs font-semibold">Reset to default</button></div>
+        <p class="text-[11px] text-gray-500 mt-3">The product catalog and footer always stay at the bottom of the page.</p>
+      </div>
+      <div class="bg-white rounded-xl border border-gray-200 p-4 min-w-0">
+        <div class="flex items-center justify-between gap-3 mb-3"><p id="pvLabel" class="text-sm font-semibold"></p><button type="button" onclick="bldReloadPreview()" class="h-9 px-3 border border-gray-300 hover:border-oro-o rounded-md text-xs font-semibold flex items-center gap-1.5"><i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>Reload</button></div>
+        <div id="pvStage" class="w-full overflow-hidden bg-oro-g rounded-lg p-3"><div id="pvBox" class="mx-auto relative rounded-lg overflow-hidden ring-1 ring-gray-300 bg-white shadow"><iframe id="pvFrame" title="Storefront preview" src="${e(PV_URL)}" onload="pushPreview()" style="border:0;position:absolute;top:0;left:0;transform-origin:0 0;background:#fff"></iframe></div></div>
+        <p class="text-[11px] text-gray-500 mt-2">Preview not loading? Make sure <span class="font-mono">STOREFRONT_URL</span> at the top of admin.html points to your storefront file (currently <span class="font-mono">${e(STOREFRONT_URL)}</span>).</p>
+      </div></div>`;
+  bldRenderLists(); fitPreview(); oroIcons();
+}
+function bldRenderLists() {
+  if (!bld || !$('bldList')) return;
+  const L = bld.layout[bld.dev], other = bld.dev === 'mobile' ? 'desktop' : 'mobile';
+  const ic = (n, c = 'w-4 h-4') => `<i data-lucide="${n}" class="${c}"></i>`;
+  const btn = 'p-1.5 rounded-md text-gray-500 hover:text-oro-o hover:bg-orange-50 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-gray-500';
+  $('bldList').innerHTML = L.length ? L.map((id, i) => { const m = bMeta(id);
+    return `<li data-id="${id}" class="flex items-center gap-2 p-2.5 rounded-lg border border-gray-200 bg-white">
+      <span class="np p-1.5 text-gray-400 hover:text-oro-o shrink-0 inline-flex items-center justify-center" style="min-width:32px;min-height:32px" onpointerdown="bldDragStart(event)" role="img" aria-label="Drag to reorder ${e(m.label)}">${ic('grip-vertical', 'w-5 h-5')}</span>
+      <span class="w-7 h-7 rounded-md bg-orange-50 text-oro-o flex items-center justify-center shrink-0">${ic(m.icon)}</span>
+      <span class="min-w-0 flex-1"><span class="block text-sm font-semibold truncate">${i + 1}. ${e(m.label)}</span><span class="block text-[11px] text-gray-500 truncate">${e(m.desc)}</span></span>
+      <button type="button" class="${btn}" onclick="bldMove(${i},-1)" ${i === 0 ? 'disabled' : ''} aria-label="Move up">${ic('chevron-up')}</button>
+      <button type="button" class="${btn}" onclick="bldMove(${i},1)" ${i === L.length - 1 ? 'disabled' : ''} aria-label="Move down">${ic('chevron-down')}</button>
+      <button type="button" class="${btn}" onclick="bldHide('${id}')" aria-label="Hide ${e(m.label)}">${ic('eye')}</button></li>`; }).join('')
+    : '<li class="p-3 rounded-lg border border-dashed border-amber-300 bg-amber-50 text-xs text-amber-900">No sections visible. The home page will only show the product catalog.</li>';
+  const hid = [...SECTION_IDS, ...Object.keys(bld.blocks)].filter((id) => !L.includes(id));
+  $('bldBlocks').innerHTML = Object.values(bld.blocks).map((b) => `<li class="flex items-center gap-2 p-2 rounded-lg border border-gray-200"><span class="min-w-0 flex-1 text-sm truncate"><span class="font-semibold">${e(bMeta(b.id).label)}</span> <span class="text-[11px] text-gray-500">${e(b.type)}</span></span><button type="button" class="text-xs font-semibold px-2.5 py-1.5 border border-gray-300 hover:border-oro-o rounded-md" onclick="bldEdit('${b.id}')">Edit</button><button type="button" class="text-xs font-semibold px-2.5 py-1.5 border border-red-300 text-red-600 rounded-md" onclick="bldDelBlock('${b.id}')">Delete</button></li>`).join('') || '<li class="text-xs text-gray-500">No custom blocks yet.</li>';
+  $('bldHidden').innerHTML = hid.length ? hid.map((id) => { const m = bMeta(id);
+    return `<li class="flex items-center gap-2 p-2.5 rounded-lg border border-dashed border-gray-300 bg-oro-g"><span class="w-7 h-7 rounded-md bg-white text-gray-400 flex items-center justify-center shrink-0">${ic(m.icon)}</span><span class="min-w-0 flex-1 text-sm text-gray-500 truncate">${e(m.label)}</span><button type="button" class="${btn}" onclick="bldShow('${id}')" aria-label="Show ${e(m.label)}">${ic('eye-off')}</button></li>`; }).join('')
+    : '<li class="text-xs text-gray-500">Nothing hidden.</li>';
+  const on = 'bg-white shadow text-oro-o', off = 'text-gray-500 hover:text-oro-c';
+  $('bldTabM').className = `flex-1 h-10 text-sm font-semibold rounded-md flex items-center justify-center gap-1.5 ${bld.dev === 'mobile' ? on : off}`;
+  $('bldTabD').className = `flex-1 h-10 text-sm font-semibold rounded-md flex items-center justify-center gap-1.5 ${bld.dev === 'desktop' ? on : off}`;
+  $('bldTabM').setAttribute('aria-selected', bld.dev === 'mobile'); $('bldTabD').setAttribute('aria-selected', bld.dev === 'desktop');
+  $('bldDevName').textContent = bld.dev; $('bldCopy').textContent = `Copy to ${other}`;
+  $('pvLabel').textContent = bld.dev === 'mobile' ? 'Live preview \u00b7 Mobile (390 px)' : 'Live preview \u00b7 Desktop (1280 px)';
+  bldDirtyUI(); oroIcons();
+}
+function bldDirtyUI() {
+  const d = bldDirty(), b = $('bldSaveBtn'); if ($('bldDirty')) $('bldDirty').classList.toggle('hidden', !d);
+  if (b && bld) { b.disabled = !d || bld.saving; b.innerHTML = bld.saving ? SPIN + 'Publishing\u2026' : 'Save &amp; Publish'; }
+}
+function bldChanged() { bldRenderLists(); pushPreview(); }
+function bldDevice(dev) { if (!bld || bld.dev === dev) return; bld.dev = dev; bldRenderLists(); fitPreview(); pushPreview(); }
+function bldMove(i, d) { const L = bld.layout[bld.dev], j = i + d; if (j < 0 || j >= L.length) return; [L[i], L[j]] = [L[j], L[i]]; bldChanged(); }
+function bldHide(id) { bld.layout[bld.dev] = bld.layout[bld.dev].filter((x) => x !== id); bldChanged(); }
+function bldShow(id) { const L = bld.layout[bld.dev]; if (!L.includes(id)) L.push(id); bldChanged(); }
+function bldCopy() { const other = bld.dev === 'mobile' ? 'desktop' : 'mobile'; bld.layout[other] = [...bld.layout[bld.dev]]; bldChanged(); toast(`Copied to ${other}. Save to publish.`); }
+function bldDiscard() { bld.layout = JSON.parse(bld.saved); bld.blocks = JSON.parse(bld.savedBlocks); bldChanged(); }
+function bldReset() { bld.layout = { mobile: [...SECTION_IDS], desktop: [...SECTION_IDS] }; bldChanged(); }
+
+// Pointer-based drag & drop (works with mouse, touch and pen; HTML5 DnD does not work on phones)
+function bldDragStart(ev) {
+  if ((ev.pointerType === 'mouse' && ev.button !== 0) || bdrag) return;
+  ev.preventDefault();
+  const li = ev.currentTarget.closest('li'), r = li.getBoundingClientRect(), ghost = li.cloneNode(true);
+  ghost.style.cssText = `position:fixed;left:${r.left}px;top:${r.top}px;width:${r.width}px;z-index:70;pointer-events:none;box-shadow:0 12px 28px rgba(0,0,0,.22);border-color:#F97316`;
+  document.body.appendChild(ghost); li.style.opacity = '.35';
+  bdrag = { li, ghost, dy: ev.clientY - r.top };
+  window.addEventListener('pointermove', bldDragMove); window.addEventListener('pointerup', bldDragEnd); window.addEventListener('pointercancel', bldDragEnd);
+}
+function bldDragMove(ev) {
+  if (!bdrag) return;
+  bdrag.ghost.style.top = (ev.clientY - bdrag.dy) + 'px';
+  const list = $('bldList'); if (!list) return;
+  const items = [...list.children].filter((n) => n !== bdrag.li && n.dataset.id);
+  const before = items.find((n) => { const r = n.getBoundingClientRect(); return ev.clientY < r.top + r.height / 2; });
+  if (before) { if (bdrag.li.nextElementSibling !== before) list.insertBefore(bdrag.li, before); }
+  else if (list.lastElementChild !== bdrag.li) list.appendChild(bdrag.li);
+}
+function bldDragCleanup() {
+  window.removeEventListener('pointermove', bldDragMove); window.removeEventListener('pointerup', bldDragEnd); window.removeEventListener('pointercancel', bldDragEnd);
+  if (bdrag) { bdrag.ghost.remove(); bdrag.li.style.opacity = ''; bdrag = null; }
+}
+function bldDragEnd() {
+  if (!bdrag) return;
+  const list = $('bldList'), ids = list ? [...list.children].map((n) => n.dataset.id).filter(Boolean) : null;
+  bldDragCleanup();
+  if (bld && ids && ids.length === bld.layout[bld.dev].length) bld.layout[bld.dev] = ids;
+  bldChanged();
+}
+</script>
+
+<script>
+// ---- Block renderer (same code the storefront uses; also powers the preview inside the block editor) ----
+function oroBlocksFactory() {
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const https = (u) => (/^https:\/\//i.test(u || '') ? u : '');
+  const isMobile = () => matchMedia('(max-width:767px)').matches;
+  async function products(c, sb) {
+    let q = sb.from('products').select('*').eq('is_active', true);
+    if (c.source === 'category') q = q.eq('category', c.category);
+    const order = { top: 'review_count', rated: 'rating', new: 'created_at', discount: 'discount_percent' }[c.source] || 'review_count';
+    let r = await q.order(order, { ascending: false, nullsFirst: false }).limit(c.count || 8);
+    if (r.error) r = await q.limit(c.count || 8);
+    return r.data || [];
+  }
+  async function render(b, ctx) {
+    const c = b.config || {}, el = document.createElement('section');
+    el.dataset.block = b.id; el.className = 'oro-block';
+    if (b.type === 'text') {
+      el.style.cssText = `background:${esc(c.bg)};color:${esc(c.color)};text-align:${esc(c.align)};padding:28px 16px`;
+      el.innerHTML = `<h2 style="font-size:1.5rem;font-weight:700">${esc(c.headline)}</h2>${c.subtitle ? `<p style="opacity:.75;margin-top:6px">${esc(c.subtitle)}</p>` : ''}`;
+    } else if (b.type === 'banner') {
+      const h = isMobile() ? c.heightM : c.heightD, full = c.width === 'full', href = c.product_id ? '?product=' + encodeURIComponent(c.product_id) : c.link, a = href ? 'a' : 'div';
+      el.style.cssText = full ? '' : 'max-width:1280px;margin:16px auto;padding:0 12px';
+      el.innerHTML = `<${a} ${href ? `href="${esc(href)}"` : ''} style="display:block;position:relative;height:${+h || 300}px;overflow:hidden;border-radius:${full ? 0 : +c.radius || 0}px;background:#f5f5f5"><img src="${esc(https(c.image_url))}" alt="${esc(c.headline)}" style="width:100%;height:100%;object-fit:${esc(c.fit)};object-position:${+c.posX}% ${+c.posY}%"/>${c.headline ? `<div style="position:absolute;left:0;right:0;bottom:0;padding:16px;color:#fff;background:linear-gradient(transparent,rgba(0,0,0,.6))"><b style="font-size:1.25rem">${esc(c.headline)}</b><div style="font-size:.85rem;opacity:.9">${esc(c.subtitle)}</div></div>` : ''}</${a}>`;
+    } else if (b.type === 'products') {
+      const list = await products(c, ctx.sb), inr = ctx.inr || ((n) => '\u20b9' + Number(n).toLocaleString('en-IN'));
+      const card = (p) => `<a href="?product=${encodeURIComponent(p.id)}" style="display:block;min-width:${c.view === 'grid' ? 0 : 150}px;background:#fff;border:1px solid #eee;border-radius:12px;padding:8px;color:inherit"><img src="${esc(https((p.images || [])[0]))}" alt="" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:8px"/><p style="font-size:.85rem;margin-top:6px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${esc(p.title)}</p><b>${inr(p.price)}</b></a>`;
+      const layout = c.view === 'grid' ? `display:grid;gap:10px;grid-template-columns:repeat(${isMobile() ? 2 : +c.cols || 4},1fr)` : 'display:flex;gap:10px;overflow-x:auto;scroll-snap-type:x proximity;padding-bottom:6px';
+      el.style.cssText = 'max-width:1280px;margin:20px auto;padding:0 12px';
+      el.innerHTML = `<h2 style="font-size:1.25rem;font-weight:700">${esc(c.headline)}</h2>${c.subtitle ? `<p style="opacity:.7;font-size:.85rem">${esc(c.subtitle)}</p>` : ''}<div style="${layout};margin-top:10px">${list.map(card).join('') || '<p style="opacity:.6">No products yet.</p>'}</div>`;
+    }
+    return el;
+  }
+  window.OroBlocks = { render };
+}
+oroBlocksFactory();
+function bldCopyCode() { const code = '<' + 'script>\n(' + oroBlocksFactory.toString() + ')();\n<' + '/script>'; (navigator.clipboard ? navigator.clipboard.writeText(code) : Promise.reject()).then(() => toast('Storefront code copied. Paste it in index.html before </body>.'), () => prompt('Copy this code:', code)); }
+// ---- Custom blocks (product rows, banners, headlines) ----
+const BTYPES = { products: ['Product row', 'shopping-bag'], banner: ['Banner', 'image'], text: ['Headline / text', 'type'] };
+const BDEF = { products: { headline: 'Top Sellers', subtitle: '', source: 'top', category: '', count: 8, view: 'carousel', cols: 4 },
+  banner: { product_id: '', image_url: '', headline: '', subtitle: '', link: '', heightD: 400, heightM: 200, fit: 'cover', posX: 50, posY: 50, radius: 12, width: 'boxed' },
+  text: { headline: 'Your headline', subtitle: '', align: 'center', bg: '#ffffff', color: '#222222' } };
+function bMeta(id) { if (SECTION_META[id]) return SECTION_META[id]; const b = bld && bld.blocks[id]; return b ? { label: b.name || (b.config.headline || BTYPES[b.type][0]), desc: 'Custom ' + BTYPES[b.type][0].toLowerCase(), icon: BTYPES[b.type][1] } : { label: id, desc: '', icon: 'box' }; }
+let bEd = null;
+function bFrameHtml() {
+  const c = bEd.config, u = safeUrl(c.image_url), hD = +c.heightD || 400, hM = +c.heightM || 200, im = (st) => `<img class="bfi" alt="" draggable="false" src="${e(u)}" style="width:100%;height:100%;object-fit:${e(c.fit)};object-position:${+c.posX}% ${+c.posY}%;pointer-events:none;${st || ''}"/>`;
+  return (u ? `<div><p class="text-xs font-semibold mb-1">Adjust the frame \u00b7 drag the image to reposition it</p><div class="np relative overflow-hidden bg-oro-g ring-2 ring-oro-o" style="aspect-ratio:1280/${hD};border-radius:${+c.radius || 0}px" onpointerdown="bFDown(event)" onpointermove="bFMove(event)" onpointerup="bFUp()" onpointercancel="bFUp()">${im()}</div><p class="text-[10px] text-gray-500 mt-0.5">Desktop (${hD}px tall)</p><div class="mt-2" style="width:34%"><div class="overflow-hidden bg-oro-g ring-1 ring-gray-300" style="aspect-ratio:390/${hM};border-radius:${Math.min(+c.radius || 0, 16)}px">${im()}</div><p class="text-[10px] text-gray-500 mt-0.5">Mobile (${hM}px tall)</p></div></div>` : '');
+}
+function bFrameRedraw() { const b = $('bFrameBox'); if (b) b.innerHTML = bFrameHtml(); }
+function bUpUI() {
+  const c = bEd.config, u = safeUrl(c.image_url);
+  return `<div><label class="block text-xs font-semibold mb-1">Banner image</label><label class="flex flex-col items-center gap-1 px-4 py-5 border-2 border-dashed border-gray-300 hover:border-oro-o rounded-xl bg-oro-g cursor-pointer text-center"><span class="text-sm font-semibold">${u ? 'Tap to replace the image' : 'Tap to choose a banner image'}</span><span class="text-xs text-gray-500">Compressed and uploaded to Cloudinary automatically. Only the link is saved to Supabase.</span><input type="file" accept="image/*" class="hidden" onchange="bUpload(this.files[0]);this.value=''"/></label><p id="bUpSt" class="text-xs mt-1"></p></div>` + `<div id="bFrameBox">${bFrameHtml()}</div>`;
+}
+async function bUpload(file) {
+  const st = $('bUpSt'); if (!file || !st) return;
+  if (!file.type.startsWith('image/') && !/\.(heic|heif)$/i.test(file.name)) return (st.textContent = 'Please choose an image file.');
+  if (file.size > 25 * 1024 * 1024) return (st.textContent = 'Image is over 25 MB.');
+  if (CLOUDINARY_CLOUD_NAME.includes('PASTE')) { st.className = 'text-xs mt-1 text-red-600'; return (st.textContent = 'Set CLOUDINARY_CLOUD_NAME at the top of admin.html first.'); }
+  st.className = 'text-xs mt-1 text-gray-600'; st.textContent = 'Compressing and uploading\u2026';
+  const ed = bEd;
+  try { const url = await cloudUpload(await compress(file)); if (bEd !== ed) return; ed.config.image_url = url; bForm(); if ($('bUpSt')) { $('bUpSt').className = 'text-xs mt-1 text-emerald-700'; $('bUpSt').textContent = '\u2713 Uploaded. Drag the preview to fit the frame.'; } }
+  catch (x) { if ($('bUpSt')) { $('bUpSt').className = 'text-xs mt-1 text-red-600'; $('bUpSt').textContent = 'Upload failed: ' + (x.message || x) + '. Check Cloud Name & Preset.'; } }
+}
+let bFd = null;
+function bFDown(ev) { ev.currentTarget.setPointerCapture(ev.pointerId); bFd = { x: ev.clientX, y: ev.clientY, px: +bEd.config.posX, py: +bEd.config.posY, w: ev.currentTarget.clientWidth, h: ev.currentTarget.clientHeight }; }
+function bFMove(ev) {
+  if (!bFd || !bEd) return; const c = bEd.config;
+  c.posX = Math.round(clamp(bFd.px - (ev.clientX - bFd.x) / bFd.w * 150)); c.posY = Math.round(clamp(bFd.py - (ev.clientY - bFd.y) / bFd.h * 150));
+  document.querySelectorAll('#bBody .bfi').forEach((i) => { i.style.objectPosition = `${c.posX}% ${c.posY}%`; });
+  ['posX', 'posY'].forEach((k) => { const i = document.querySelector(`#bBody [data-k="${k}"]`); if (i) i.value = c[k]; });
+}
+function bFUp() { bFd = null; bPrev(); }
+
+async function bldEdit(id) {
+  const ex = id && bld.blocks[id]; bEd = ex ? { id, type: ex.type, name: ex.name, config: { ...ex.config } } : { id: null, type: 'products', name: '', config: { ...BDEF.products } };
+  if (!$('bModal')) document.body.insertAdjacentHTML('beforeend', '<div id="bModal" class="hidden fixed inset-0 z-[55] bg-black/60 items-end md:items-center justify-center md:p-4"><div class="bg-white w-full md:max-w-lg rounded-t-xl md:rounded-xl max-h-[92vh] flex flex-col"><div class="px-5 py-4 border-b flex items-center justify-between"><h2 id="bTitle" class="font-bold"></h2><button type="button" onclick="bClose()" aria-label="Close">\u2715</button></div><div id="bBody" class="p-5 overflow-y-auto space-y-3"></div><div class="px-5 py-4 border-t flex gap-2 justify-end"><p id="bErr" class="text-xs text-red-600 mr-auto self-center"></p><button type="button" onclick="bClose()" class="h-10 px-4 border border-gray-300 rounded-md text-sm font-semibold">Cancel</button><button type="button" onclick="bSave()" class="h-10 px-5 bg-oro-o hover:bg-oro-oh text-white rounded-md text-sm font-semibold">Apply</button></div></div></div>');
+  if (!bEd.cats) { bEd.cats = (await fetchAll('categories', null)).map((c) => c.name).filter(Boolean); bEd.banners = await fetchAll('banners'); bEd.products = await fetchAll('products', null); }
+  $('bTitle').textContent = ex ? 'Edit block' : 'Add block'; bForm(); $('bModal').classList.remove('hidden'); $('bModal').classList.add('flex');
+}
+function bProdOpts(q) { q = String(q).toLowerCase().trim(); const cur = String(bEd.config.product_id || ''); return '<option value="">No product (banner only)</option>' + bEd.products.filter((p) => String(p.id) === cur || !q || String(p.title).toLowerCase().includes(q) || String(p.id).includes(q)).map((p) => `<option value="${e(p.id)}" ${String(p.id) === cur ? 'selected' : ''}>${e(p.title)} \u2014 [ID: ${e(p.id)}]</option>`).join(''); }
+function bProdFilter(q) { const el = $('bProdSel'); if (el) el.innerHTML = bProdOpts(q); }
+async function bPrev() { const box = $('bPrev'); if (!box || !bEd) return; try { const el = await window.OroBlocks.render({ id: 'prev', type: bEd.type, config: bEd.config }, { sb: db }); if ($('bPrev') === box) { box.innerHTML = '<p class="text-[10px] text-gray-500 mb-1">Preview</p>'; box.appendChild(el); } } catch (x) { box.textContent = 'Preview unavailable: ' + (x.message || x); } }
+function bClose() { $('bModal').classList.add('hidden'); $('bModal').classList.remove('flex'); bEd = null; }
+function bForm() {
+  const c = bEd.config, t = bEd.type, ip = (k, l, ty = 'text', x = '') => `<div><label class="block text-xs font-semibold mb-1">${l}</label><input data-k="${k}" type="${ty}" ${x} value="${e(c[k])}" class="${IN}" onchange="bEd.config[this.dataset.k]=this.type==='number'?Number(this.value):this.value;bFrameRedraw();bPrev()"/></div>`;
+  const sel = (k, l, o) => `<div><label class="block text-xs font-semibold mb-1">${l}</label><select class="${IN}" onchange="bEd.config['${k}']=this.value;${k === 'source' ? 'bForm()' : 'bPrev()'}">${o.map(([v, n]) => `<option value="${e(v)}" ${String(c[k]) === String(v) ? 'selected' : ''}>${e(n)}</option>`).join('')}</select></div>`;
+  let h = `<div><label class="block text-xs font-semibold mb-1">Block type</label><select ${bEd.id ? 'disabled' : ''} class="${IN}" onchange="bEd.type=this.value;bEd.config={...BDEF[this.value]};bForm()">${Object.entries(BTYPES).map(([k, v]) => `<option value="${k}" ${k === t ? 'selected' : ''}>${v[0]}</option>`).join('')}</select></div>` +
+    `<div><label class="block text-xs font-semibold mb-1">Admin label (optional)</label><input value="${e(bEd.name)}" class="${IN}" onchange="bEd.name=this.value"/></div>`;
+  if (t === 'products') h += ip('headline', 'Headline') + ip('subtitle', 'Sub-headline') + sel('source', 'Which products', [['top', 'Top sellers (most reviewed)'], ['rated', 'Highest rated'], ['new', 'Newest'], ['discount', 'Biggest discount'], ['category', 'From one category']]) +
+    (c.source === 'category' ? sel('category', 'Category', [['', 'Pick a category'], ...bEd.cats.map((n) => [n, n])]) : '') + ip('count', 'How many products', 'number', 'min="1" max="24"') + sel('view', 'Layout', [['carousel', 'Scrolling row'], ['grid', 'Grid']]) + (c.view === 'grid' ? sel('cols', 'Columns (desktop)', [2, 3, 4, 5, 6].map((n) => [n, n])) : '');
+  if (t === 'banner') h += bUpUI() + '' + ip('heightD', 'Height on desktop (px)', 'number', 'min="80" max="900"') + ip('heightM', 'Height on mobile (px)', 'number', 'min="80" max="700"') + sel('fit', 'Image fit', [['cover', 'Fill (crop to fit)'], ['contain', 'Show whole image']]) + sel('width', 'Width', [['boxed', 'Boxed (with margins)'], ['full', 'Full width edge-to-edge']]) +
+    ip('radius', 'Corner roundness (px)', 'number', 'min="0" max="60"') + ip('posX', 'Image focus horizontal %', 'number', 'min="0" max="100"') + ip('posY', 'Image focus vertical %', 'number', 'min="0" max="100"') + ip('headline', 'Text on banner (optional)') + ip('subtitle', 'Small text (optional)') + `<div><label class="block text-xs font-semibold mb-1">When clicked, open this product</label><input class="${IN} mb-2" placeholder="Search products by name or ID\u2026" oninput="bProdFilter(this.value)" autocomplete="off"/><select id="bProdSel" class="${IN}" onchange="bEd.config.product_id=this.value;bPrev()">${bProdOpts('')}</select></div>` + ip('link', 'or a custom link (used only if no product is picked)');
+  if (t === 'text') h += ip('headline', 'Headline') + ip('subtitle', 'Sub-text') + sel('align', 'Alignment', [['left', 'Left'], ['center', 'Center'], ['right', 'Right']]) + ip('bg', 'Background colour', 'color') + ip('color', 'Text colour', 'color');
+  $('bBody').innerHTML = h + '<div id="bPrev" class="border border-dashed border-gray-300 rounded-lg p-2 overflow-hidden"></div>'; $('bErr').textContent = ''; bPrev();
+}
+function bSave() {
+  const c = bEd.config; if (bEd.type === 'banner' && !safeUrl(c.image_url)) return ($('bErr').textContent = 'Add an https image first.');
+  if (bEd.type === 'products' && c.source === 'category' && !c.category) return ($('bErr').textContent = 'Pick a category.');
+  if (bEd.type === 'products') c.count = Math.max(1, Math.min(24, Math.round(c.count) || 8));
+  const id = bEd.id || 'cb_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+  bld.blocks[id] = { id, type: bEd.type, name: bEd.name.trim(), config: c };
+  if (!bEd.id) bld.layout[bld.dev].push(id);
+  bClose(); bldChanged(); toast('Block added to ' + bld.dev + '. Save & Publish to go live.');
+}
+function bldDelBlock(id) { if (!confirm('Delete this custom block from both layouts?')) return; delete bld.blocks[id]; ['mobile', 'desktop'].forEach((d) => { bld.layout[d] = bld.layout[d].filter((x) => x !== id); }); bldChanged(); }
+
+// Live preview: the storefront runs inside an iframe at a real 390px / 1280px width, so its own CSS breakpoints apply
+function fitPreview() {
+  const st = $('pvStage'), fr = $('pvFrame'), box = $('pvBox'); if (!st || !fr || !box || !bld) return;
+  const mob = bld.dev === 'mobile', W = mob ? 390 : 1280, H = mob ? 780 : 820, s = Math.min(1, Math.max(0.2, (st.clientWidth - 24) / W));
+  fr.style.width = W + 'px'; fr.style.height = H + 'px'; fr.style.transform = `scale(${s})`;
+  box.style.width = Math.round(W * s) + 'px'; box.style.height = Math.round(H * s) + 'px';
+}
+function pushPreview() {
+  const fr = $('pvFrame'); if (!fr || !fr.contentWindow || !bld) return;
+  let target = '*'; try { target = new URL(PV_URL, location.href).origin; if (target === 'null') target = '*'; } catch (x) { /* keep * */ }
+  try { fr.contentWindow.postMessage({ type: 'oro-layout', mobile: bld.layout.mobile, desktop: bld.layout.desktop, blocks: Object.values(bld.blocks) }, target); } catch (x) { /* ignore */ }
+}
+function bldReloadPreview() { const fr = $('pvFrame'); if (fr) fr.src = PV_URL; }
+
+async function bldSave() {
+  if (!db) return toast('Supabase isn\u2019t configured.');
+  if (!bld || bld.saving || !bldDirty()) return;
+  bld.saving = true; bldDirtyUI();
+  try {
+    const now = new Date().toISOString();
+    const cur0 = JSON.parse(bld.savedBlocks), gone = Object.keys(cur0).filter((id) => !bld.blocks[id]), list0 = Object.values(bld.blocks);
+    if (list0.length) { const r = await db.from('site_blocks').upsert(list0.map((b) => ({ id: b.id, type: b.type, name: b.name, config: b.config })), { onConflict: 'id' }); if (r.error) throw new Error(dbMsg(r.error, 'site_blocks')); }
+    if (gone.length) { const r = await db.from('site_blocks').delete().in('id', gone); if (r.error) throw new Error(dbMsg(r.error, 'site_blocks')); }
+    const { data, error } = await db.from('site_layout').upsert(['mobile', 'desktop'].map((device) => ({ device, sections: bld.layout[device], updated_at: now })), { onConflict: 'device' }).select('device');
+    if (error) throw error;
+    if (!data || data.length < 2) throw new Error('The database refused the save. Run supabase-layout-setup.sql and sign in again.');
+    bld.saved = JSON.stringify(bld.layout); bld.savedBlocks = JSON.stringify(bld.blocks); toast('Layout published to your storefront');
+  } catch (x) { toast('Save failed: ' + dbMsg(x, 'site_layout')); }
+  if (bld) { bld.saving = false; bldDirtyUI(); }
+}
+
+// ---- Neural network canvas: 120 micro-particles, one batched path per frame ----
+function neural() {
+  $('view').innerHTML = head('Neural Net') + '<canvas id="nn" class="w-full h-[50vh] rounded-xl bg-oro-c block" style="touch-action:pan-y"></canvas><div id="term" class="mt-3 h-40 overflow-hidden rounded-xl bg-black text-emerald-400 font-mono text-xs p-3 flex flex-col justify-end" aria-live="off"></div>';
+  const c = $('nn'), ctx = c.getContext('2d'), dpr = Math.min(devicePixelRatio || 1, 2), N = 120, RANGE = 110, R2 = RANGE * RANGE, FOV = 600;
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let W = 0, H = 0, raf = 0, frames = 0, fps = 0, last = performance.now(), ptr = { x: -1e4, y: -1e4, down: false };
+  const resize = () => { W = c.clientWidth; H = c.clientHeight; c.width = Math.round(W * dpr); c.height = Math.round(H * dpr); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); };
+  resize(); const ro = new ResizeObserver(resize); ro.observe(c);
+  const rnd = (a, b) => a + Math.random() * (b - a);
+  const P = Array.from({ length: N }, () => { const bx = rnd(-.25, .25), by = rnd(-.25, .25), bz = rnd(-.2, .2); return { x: rnd(-.6, .6) * 900, y: rnd(-.6, .6) * 500, z: rnd(-250, 250), vx: bx, vy: by, vz: bz, bx, by, bz, r: rnd(1.2, 2), sx: 0, sy: 0 }; });
+  const onMove = (ev) => { const b = c.getBoundingClientRect(); ptr.x = ev.clientX - b.left; ptr.y = ev.clientY - b.top; };
+  const onLeave = () => { ptr.x = ptr.y = -1e4; ptr.down = false; }, onDown = (ev) => { onMove(ev); ptr.down = true; }, onUp = () => { ptr.down = false; };
+  c.addEventListener('pointermove', onMove); c.addEventListener('pointerleave', onLeave); c.addEventListener('pointerdown', onDown); window.addEventListener('pointerup', onUp);
+  function frame(now) {
+    const cx = W / 2, cy = H / 2;
+    ctx.clearRect(0, 0, W, H);
+    for (let i = 0; i < N; i++) {
+      const p = P[i], s = FOV / (FOV + p.z + 300); p.sx = cx + p.x * s; p.sy = cy + p.y * s;
+      if (!reduce) {
+        const dx = p.sx - ptr.x, dy = p.sy - ptr.y, d2 = dx * dx + dy * dy;
+        if (d2 < 16900 && d2 > 1) { const d = Math.sqrt(d2), f = (1 - d / 130) * (ptr.down ? -0.35 : 0.5); p.vx += dx / d * f; p.vy += dy / d * f; } // hover repels, press clusters
+        p.vx += (p.bx - p.vx) * .02; p.vy += (p.by - p.vy) * .02; p.vz += (p.bz - p.vz) * .02;
+        p.x += p.vx; p.y += p.vy; p.z += p.vz;
+        const lx = W * .62 / s, ly = H * .62 / s; // bounce inside the visible volume
+        if (p.x > lx || p.x < -lx) { p.vx = -p.vx; p.bx = -p.bx; p.x = Math.max(-lx, Math.min(lx, p.x)); }
+        if (p.y > ly || p.y < -ly) { p.vy = -p.vy; p.by = -p.by; p.y = Math.max(-ly, Math.min(ly, p.y)); }
+        if (p.z > 250 || p.z < -250) { p.vz = -p.vz; p.bz = -p.bz; }
+      }
+    }
+    ctx.lineWidth = 0.7; ctx.strokeStyle = 'rgba(249,115,22,0.25)'; ctx.beginPath();
+    for (let i = 0; i < N; i++) { const a = P[i]; for (let j = i + 1; j < N; j++) { const b = P[j], dx = a.sx - b.sx, dy = a.sy - b.sy; if (dx * dx + dy * dy < R2) { ctx.moveTo(a.sx, a.sy); ctx.lineTo(b.sx, b.sy); } } }
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(249,115,22,0.95)'; ctx.beginPath();
+    for (let i = 0; i < N; i++) { const p = P[i]; ctx.moveTo(p.sx + p.r, p.sy); ctx.arc(p.sx, p.sy, p.r, 0, 6.2832); }
+    ctx.fill();
+    frames++; if (now - last >= 1000) { fps = Math.round(frames * 1000 / (now - last)); frames = 0; last = now; }
+    raf = requestAnimationFrame(frame);
+  }
+  raf = requestAnimationFrame(frame);
+  // Diagnostic HUD: real Supabase pings (latency + row counts)
+  const term = $('term'), log = (t) => { const d = document.createElement('div'); d.textContent = new Date().toLocaleTimeString('en-GB') + ' ' + t; term.appendChild(d); while (term.children.length > 8) term.firstChild.remove(); };
+  const tables = ['orders', 'products', 'banners', 'coupons']; let n = 0, busy = false;
+  log(`[GPU] canvas online \u00b7 ${N} micro-particles`);
+  async function tick() {
+    if (busy) return; busy = true;
+    try {
+      if (!db) log('[SUPABASE] not configured \u00b7 offline diagnostics');
+      else { const t = tables[n++ % tables.length], t0 = performance.now(); const { count, error } = await db.from(t).select('*', { count: 'exact', head: true }); log(error ? `[SUPABASE] ${t} \u2715 ${error.message}` : `[SUPABASE] ${t} \u2713 ${count ?? 0} rows \u00b7 ${Math.round(performance.now() - t0)}ms`); }
+      log(`[GPU] ${fps} fps \u00b7 ${N} particles`);
+    } catch (x) { log('[SUPABASE] sync error \u00b7 ' + (x.message || x)); }
+    busy = false;
+  }
+  tick(); const iv = setInterval(tick, 2500);
+  stopNet = () => { cancelAnimationFrame(raf); clearInterval(iv); ro.disconnect(); c.removeEventListener('pointermove', onMove); c.removeEventListener('pointerleave', onLeave); c.removeEventListener('pointerdown', onDown); window.removeEventListener('pointerup', onUp); };
+}
+oroIcons();
+bootAuth(); // restore an existing admin session (if any), otherwise stay on the login screen
+</script>
+
+</body>
+</html>
